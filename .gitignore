@@ -1,0 +1,5 @@
+/envsetup
+/dist/
+*.test
+*.out
+.envsetup/
