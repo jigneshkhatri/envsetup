@@ -69,16 +69,22 @@ type Provider interface {
 	Discover(ctx context.Context, sys SystemContext) ([]Resource, error)
 
 	// Export converts discovered resources into their project (desired
-	// state) representation.
-	Export(ctx context.Context, resources []Resource) ([]ProjectResource, error)
+	// state) representation. projectDir is the exported project's root
+	// directory, for providers that must read or write raw file content
+	// under its files/ tree (e.g. dotfiles) rather than just small
+	// attributes; providers that don't need this may ignore it.
+	Export(ctx context.Context, projectDir string, resources []Resource) ([]ProjectResource, error)
 
 	// Plan diffs desired resources (from the project) against current
 	// resources (from a fresh Discover) and returns the actions needed to
-	// reconcile them.
+	// reconcile them. Deliberately has no filesystem access of its own --
+	// providers diff via attributes (e.g. a content hash) computed by
+	// Discover and Export, not by re-reading files.
 	Plan(ctx context.Context, desired []ProjectResource, current []Resource) ([]Action, error)
 
-	// Apply executes a single action produced by Plan.
-	Apply(ctx context.Context, action Action) error
+	// Apply executes a single action produced by Plan. projectDir is the
+	// exported project's root directory, mirroring Export.
+	Apply(ctx context.Context, projectDir string, action Action) error
 
 	// Validate reports drift between desired resources and live system
 	// state, without modifying anything.

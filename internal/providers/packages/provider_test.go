@@ -78,7 +78,7 @@ func TestExportCarriesProvenance(t *testing.T) {
 		{ID: "neovim", Attributes: map[string]any{"provenance": "pacman"}},
 	}
 
-	exported, err := p.Export(context.Background(), resources)
+	exported, err := p.Export(context.Background(), "", resources)
 	if err != nil {
 		t.Fatalf("Export: %v", err)
 	}
@@ -127,21 +127,21 @@ func TestApplyInstallsViaPacmanOrAURHelper(t *testing.T) {
 	fr := newFakeRunner()
 	p := newWithRunner(fr.run, "yay")
 
-	if err := p.Apply(context.Background(), core.Action{
+	if err := p.Apply(context.Background(), "", core.Action{
 		ResourceID: "neovim", Kind: core.ActionCreate,
 		Attributes: map[string]any{"provenance": "pacman"},
 	}); err != nil {
 		t.Fatalf("Apply (pacman): %v", err)
 	}
 
-	if err := p.Apply(context.Background(), core.Action{
+	if err := p.Apply(context.Background(), "", core.Action{
 		ResourceID: "yay-bin", Kind: core.ActionCreate,
 		Attributes: map[string]any{"provenance": "aur"},
 	}); err != nil {
 		t.Fatalf("Apply (aur): %v", err)
 	}
 
-	if err := p.Apply(context.Background(), core.Action{
+	if err := p.Apply(context.Background(), "", core.Action{
 		ResourceID: "ripgrep", Kind: core.ActionDelete,
 	}); err != nil {
 		t.Fatalf("Apply (delete): %v", err)
@@ -166,7 +166,7 @@ func TestApplyAURWithoutHelperFails(t *testing.T) {
 	fr := newFakeRunner()
 	p := newWithRunner(fr.run, "") // no AUR helper detected
 
-	err := p.Apply(context.Background(), core.Action{
+	err := p.Apply(context.Background(), "", core.Action{
 		ResourceID: "yay-bin", Kind: core.ActionCreate,
 		Attributes: map[string]any{"provenance": "aur"},
 	})

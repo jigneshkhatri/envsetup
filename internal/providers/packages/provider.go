@@ -78,7 +78,7 @@ func (p *Provider) Discover(ctx context.Context, sys core.SystemContext) ([]core
 	return resources, nil
 }
 
-func (p *Provider) Export(ctx context.Context, resources []core.Resource) ([]core.ProjectResource, error) {
+func (p *Provider) Export(ctx context.Context, projectDir string, resources []core.Resource) ([]core.ProjectResource, error) {
 	out := make([]core.ProjectResource, len(resources))
 	for i, r := range resources {
 		out[i] = core.ProjectResource{
@@ -139,7 +139,7 @@ func (p *Provider) Plan(ctx context.Context, desired []core.ProjectResource, cur
 // otherwise via pacman directly. pacman itself needs root, so plain pacman
 // calls are prefixed with sudo; AUR helpers manage their own sudo
 // invocations internally and must not be run as root.
-func (p *Provider) Apply(ctx context.Context, action core.Action) error {
+func (p *Provider) Apply(ctx context.Context, projectDir string, action core.Action) error {
 	switch action.Kind {
 	case core.ActionCreate:
 		provenance, _ := action.Attributes["provenance"].(string)

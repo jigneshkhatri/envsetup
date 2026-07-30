@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jigneshkhatri/envsetup/internal/providers/dotfiles"
 	"github.com/jigneshkhatri/envsetup/internal/providers/packages"
 	"github.com/jigneshkhatri/envsetup/internal/registry"
 )
@@ -19,6 +20,7 @@ func main() {
 		In:       os.Stdin,
 	}
 	app.Registry.Register(packages.New())
+	app.Registry.Register(dotfiles.New())
 
 	root := newRootCmd(app)
 	root.SetOut(app.Out)

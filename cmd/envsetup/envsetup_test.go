@@ -35,7 +35,7 @@ func (p *testProvider) Discover(ctx context.Context, sys core.SystemContext) ([]
 	return out, nil
 }
 
-func (p *testProvider) Export(ctx context.Context, resources []core.Resource) ([]core.ProjectResource, error) {
+func (p *testProvider) Export(ctx context.Context, projectDir string, resources []core.Resource) ([]core.ProjectResource, error) {
 	out := make([]core.ProjectResource, len(resources))
 	for i, r := range resources {
 		out[i] = core.ProjectResource{ID: r.ID, Attributes: r.Attributes}
@@ -61,7 +61,7 @@ func (p *testProvider) Plan(ctx context.Context, desired []core.ProjectResource,
 	return actions, nil
 }
 
-func (p *testProvider) Apply(ctx context.Context, action core.Action) error {
+func (p *testProvider) Apply(ctx context.Context, projectDir string, action core.Action) error {
 	if action.Kind == core.ActionCreate {
 		value, _ := action.Attributes["value"].(string)
 		p.system[action.ResourceID] = value

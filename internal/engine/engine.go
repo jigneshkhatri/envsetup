@@ -62,7 +62,7 @@ func (e *Engine) Export(ctx context.Context) ([]ExportResult, error) {
 			return nil, fmt.Errorf("engine: discovering %s: %w", p.Type(), err)
 		}
 
-		exported, err := p.Export(ctx, discovered)
+		exported, err := p.Export(ctx, e.Project.Dir, discovered)
 		if err != nil {
 			return nil, fmt.Errorf("engine: exporting %s: %w", p.Type(), err)
 		}
@@ -159,7 +159,7 @@ func (e *Engine) Apply(ctx context.Context, opts ApplyOptions) ([]core.Action, e
 			errs = append(errs, fmt.Errorf("engine: no provider registered for type %q", a.ResourceType))
 			continue
 		}
-		if err := p.Apply(ctx, a); err != nil {
+		if err := p.Apply(ctx, e.Project.Dir, a); err != nil {
 			errs = append(errs, fmt.Errorf("engine: applying %s %q: %w", a.ResourceType, a.ResourceID, err))
 		}
 	}

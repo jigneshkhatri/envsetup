@@ -19,8 +19,17 @@ import (
 const (
 	manifestFileName = "envsetup.yaml"
 	resourcesDirName = "resources"
+	filesDirName     = "files"
 	schemaVersion    = 1
 )
+
+// FilesDir returns the path where providers store raw file content for a
+// project rooted at dir (e.g. tracked dotfile bytes), keeping the "files"
+// on-disk layout convention in one place instead of duplicated across
+// providers.
+func FilesDir(dir string) string {
+	return filepath.Join(dir, filesDirName)
+}
 
 // Manifest is the project's top-level envsetup.yaml.
 type Manifest struct {
@@ -166,8 +175,8 @@ func (p *Project) Save() error {
 // attributes flattened into a single YAML map so resource files read
 // naturally, e.g.:
 //
-//	- id: neovim
-//	  provenance: pacman
+//   - id: neovim
+//     provenance: pacman
 type flatResource map[string]any
 
 func flatResourceFrom(r core.ProjectResource) flatResource {

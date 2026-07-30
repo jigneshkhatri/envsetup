@@ -36,7 +36,7 @@ func (f *fakeProvider) Discover(ctx context.Context, sys core.SystemContext) ([]
 	return resources, nil
 }
 
-func (f *fakeProvider) Export(ctx context.Context, resources []core.Resource) ([]core.ProjectResource, error) {
+func (f *fakeProvider) Export(ctx context.Context, projectDir string, resources []core.Resource) ([]core.ProjectResource, error) {
 	out := make([]core.ProjectResource, len(resources))
 	for i, r := range resources {
 		out[i] = core.ProjectResource{ID: r.ID, Attributes: r.Attributes}
@@ -81,7 +81,7 @@ func (f *fakeProvider) Plan(ctx context.Context, desired []core.ProjectResource,
 	return actions, nil
 }
 
-func (f *fakeProvider) Apply(ctx context.Context, action core.Action) error {
+func (f *fakeProvider) Apply(ctx context.Context, projectDir string, action core.Action) error {
 	switch action.Kind {
 	case core.ActionCreate, core.ActionUpdate:
 		value, _ := action.Attributes["value"].(string)
