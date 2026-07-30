@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jigneshkhatri/envsetup/internal/providers/packages"
 	"github.com/jigneshkhatri/envsetup/internal/registry"
 )
 
@@ -17,8 +18,7 @@ func main() {
 		Err:      os.Stderr,
 		In:       os.Stdin,
 	}
-	// Real providers register themselves here as they're built, e.g.:
-	//   app.Registry.Register(packages.New())
+	app.Registry.Register(packages.New())
 
 	root := newRootCmd(app)
 	root.SetOut(app.Out)
