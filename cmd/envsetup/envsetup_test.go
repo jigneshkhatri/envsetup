@@ -286,6 +286,41 @@ func TestPlanWithoutProjectHintsInit(t *testing.T) {
 	}
 }
 
+func TestDoctorReportsNoIssuesForCleanProject(t *testing.T) {
+	dir := t.TempDir()
+	app, out := newTestApp(t, map[string]string{"widget-a": "v1"})
+
+	if err := execute(t, app, "init", dir); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if err := execute(t, app, "export", "--project", dir, "--yes"); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	out.Reset()
+	app.ExitCode = 0
+	if err := execute(t, app, "doctor", "--project", dir); err != nil {
+		t.Fatalf("doctor: %v\n%s", err, out)
+	}
+	if app.ExitCode != 0 {
+		t.Errorf("doctor exit code = %d, want 0 for a clean project", app.ExitCode)
+	}
+	if !strings.Contains(out.String(), "No issues found") {
+		t.Errorf("expected \"No issues found\", got %q", out.String())
+	}
+}
+
+func TestDoctorWithoutProjectHintsInit(t *testing.T) {
+	app, _ := newTestApp(t, map[string]string{})
+	err := execute(t, app, "doctor", "--project", t.TempDir())
+	if err == nil {
+		t.Fatal("expected error for missing project, got nil")
+	}
+	if !strings.Contains(err.Error(), "envsetup init") {
+		t.Errorf("error should hint at `envsetup init`, got: %v", err)
+	}
+}
+
 func TestResolveProjectDir(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("project", "", "")

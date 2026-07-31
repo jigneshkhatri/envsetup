@@ -9,9 +9,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jigneshkhatri/envsetup/internal/core"
 )
+
+// doctorRemoteTimeout bounds how long a single `git ls-remote` reachability
+// check may take, so a doctor run against many repos with a bad network
+// doesn't hang indefinitely.
+const doctorRemoteTimeout = 5 * time.Second
 
 // Provider discovers and reconciles git-cloned repositories under homeDir.
 type Provider struct {
@@ -239,4 +245,34 @@ func (p *Provider) Validate(ctx context.Context, desired []core.ProjectResource)
 	}
 
 	return results, nil
+}
+
+// Doctor checks that each desired repo's remote is actually reachable.
+// A repo can pass Validate (local clone matches the desired remote URL)
+// while that remote has since been deleted, renamed, or gone private --
+// which would only surface as a confusing failure the next time apply
+// tries to re-clone it. Each check is bounded by doctorRemoteTimeout so a
+// bad network doesn't hang the whole doctor run.
+func (p *Provider) Doctor(ctx context.Context, projectDir string, desired []core.ProjectResource) ([]core.Diagnosis, error) {
+	var diagnoses []core.Diagnosis
+
+	for _, d := range desired {
+		remote, _ := d.Attributes["remote"].(string)
+		if remote == "" {
+			continue
+		}
+
+		checkCtx, cancel := context.WithTimeout(ctx, doctorRemoteTimeout)
+		_, err := p.run(checkCtx, "git", "ls-remote", "--exit-code", remote)
+		cancel()
+
+		if err != nil {
+			diagnoses = append(diagnoses, core.Diagnosis{
+				ResourceType: p.Type(), ResourceID: d.ID,
+				Message: fmt.Sprintf("remote %s is unreachable", remote),
+			})
+		}
+	}
+
+	return diagnoses, nil
 }

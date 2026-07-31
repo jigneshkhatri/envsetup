@@ -232,3 +232,46 @@ func (e *Engine) Validate(ctx context.Context) ([]core.ValidationResult, error) 
 
 	return results, nil
 }
+
+// Doctor runs cross-provider health diagnostics: generic project schema
+// checks (blank or duplicate resource IDs), plus each provider's own
+// Doctor checks (for providers that implement core.DoctorProvider), never
+// modifying anything.
+func (e *Engine) Doctor(ctx context.Context) ([]core.Diagnosis, error) {
+	var diagnoses []core.Diagnosis
+
+	for _, typ := range e.Project.Types() {
+		seen := make(map[string]bool)
+		for _, r := range e.Project.ResourcesFor(typ) {
+			if r.ID == "" {
+				diagnoses = append(diagnoses, core.Diagnosis{ResourceType: typ, Message: "a resource has an empty id"})
+				continue
+			}
+			if seen[r.ID] {
+				diagnoses = append(diagnoses, core.Diagnosis{ResourceType: typ, ResourceID: r.ID, Message: "duplicate id declared more than once"})
+				continue
+			}
+			seen[r.ID] = true
+		}
+	}
+
+	for _, p := range e.Registry.All() {
+		dp, ok := p.(core.DoctorProvider)
+		if !ok {
+			continue
+		}
+
+		desired := e.Project.ResourcesFor(p.Type())
+		if len(desired) == 0 {
+			continue
+		}
+
+		found, err := dp.Doctor(ctx, e.Project.Dir, desired)
+		if err != nil {
+			return nil, fmt.Errorf("engine: diagnosing %s: %w", p.Type(), err)
+		}
+		diagnoses = append(diagnoses, found...)
+	}
+
+	return diagnoses, nil
+}

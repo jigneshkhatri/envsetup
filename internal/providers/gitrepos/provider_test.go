@@ -319,3 +319,23 @@ func TestValidateReportsMissingConflictAndClean(t *testing.T) {
 		t.Errorf("missing result = %+v", byID["missing"])
 	}
 }
+
+func TestDoctorReportsUnreachableRemoteOnly(t *testing.T) {
+	fr := newFakeRunner()
+	fr.set("abc123\tHEAD\n", "git", "ls-remote", "--exit-code", "https://example.com/reachable.git")
+	fr.fail("git", "ls-remote", "--exit-code", "https://example.com/unreachable.git")
+
+	p := newWithRunner(t.TempDir(), fr.run)
+	desired := []core.ProjectResource{
+		{ID: "reachable", Attributes: map[string]any{"remote": "https://example.com/reachable.git"}},
+		{ID: "unreachable", Attributes: map[string]any{"remote": "https://example.com/unreachable.git"}},
+	}
+
+	diagnoses, err := p.Doctor(context.Background(), "", desired)
+	if err != nil {
+		t.Fatalf("Doctor: %v", err)
+	}
+	if len(diagnoses) != 1 || diagnoses[0].ResourceID != "unreachable" {
+		t.Fatalf("got %+v, want a single diagnosis for \"unreachable\"", diagnoses)
+	}
+}

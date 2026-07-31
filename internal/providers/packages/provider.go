@@ -189,3 +189,29 @@ func (p *Provider) Validate(ctx context.Context, desired []core.ProjectResource)
 
 	return results, nil
 }
+
+// Doctor reports desired pacman-provenance packages that are no longer
+// available in the synced repositories -- a package that was AUR-only,
+// dropped, or renamed upstream will otherwise only surface as a confusing
+// install failure the next time apply runs. AUR packages aren't checked
+// here: there's no built-in AUR search, only the configured AUR helper,
+// and its query interface isn't guaranteed consistent across helpers.
+func (p *Provider) Doctor(ctx context.Context, projectDir string, desired []core.ProjectResource) ([]core.Diagnosis, error) {
+	var diagnoses []core.Diagnosis
+
+	for _, d := range desired {
+		provenance, _ := d.Attributes["provenance"].(string)
+		if provenance != "pacman" {
+			continue
+		}
+
+		if _, err := p.run(ctx, "pacman", "-Si", d.ID); err != nil {
+			diagnoses = append(diagnoses, core.Diagnosis{
+				ResourceType: p.Type(), ResourceID: d.ID,
+				Message: "no longer available in the configured repositories",
+			})
+		}
+	}
+
+	return diagnoses, nil
+}

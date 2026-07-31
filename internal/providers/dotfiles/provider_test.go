@@ -335,3 +335,45 @@ func TestFullLifecycle(t *testing.T) {
 		t.Errorf("reconciled content = %q, want original content", got)
 	}
 }
+
+func TestDoctorReportsBrokenSymlinkOnly(t *testing.T) {
+	home := t.TempDir()
+	projectDir := t.TempDir()
+	p := newWithHome(home)
+	ctx := context.Background()
+
+	// A healthy symlink pointing at a real files/ entry.
+	okDest := filepath.Join(project.FilesDir(projectDir), "ok")
+	if err := os.MkdirAll(filepath.Dir(okDest), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(okDest, []byte("content"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.Symlink(okDest, filepath.Join(home, "ok")); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	// A broken symlink pointing at a files/ entry that doesn't exist.
+	brokenDest := filepath.Join(project.FilesDir(projectDir), "broken")
+	if err := os.Symlink(brokenDest, filepath.Join(home, "broken")); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	// A copy-strategy resource, which can never have a broken symlink.
+	writeHomeFile(t, home, "copied", "content")
+
+	desired := []core.ProjectResource{
+		{ID: "ok", Attributes: map[string]any{"strategy": "symlink"}},
+		{ID: "broken", Attributes: map[string]any{"strategy": "symlink"}},
+		{ID: "copied", Attributes: map[string]any{"strategy": "copy"}},
+	}
+
+	diagnoses, err := p.Doctor(ctx, projectDir, desired)
+	if err != nil {
+		t.Fatalf("Doctor: %v", err)
+	}
+	if len(diagnoses) != 1 || diagnoses[0].ResourceID != "broken" {
+		t.Fatalf("got %+v, want a single diagnosis for \"broken\"", diagnoses)
+	}
+}

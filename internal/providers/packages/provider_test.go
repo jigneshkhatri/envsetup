@@ -2,6 +2,7 @@ package packages
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -203,5 +204,26 @@ func TestValidateReportsMissingPackages(t *testing.T) {
 	}
 	if !byID["ripgrep"].Drifted {
 		t.Error("ripgrep should be drifted (not installed)")
+	}
+}
+
+func TestDoctorReportsUnavailablePacmanPackagesOnly(t *testing.T) {
+	fr := newFakeRunner()
+	fr.set("Name : neovim\n", "pacman", "-Si", "neovim")
+	fr.errs["pacman -Si ancient-pkg"] = fmt.Errorf("package not found")
+
+	p := newWithRunner(fr.run, "")
+	desired := []core.ProjectResource{
+		{ID: "neovim", Attributes: map[string]any{"provenance": "pacman"}},
+		{ID: "ancient-pkg", Attributes: map[string]any{"provenance": "pacman"}},
+		{ID: "some-aur-pkg", Attributes: map[string]any{"provenance": "aur"}},
+	}
+
+	diagnoses, err := p.Doctor(context.Background(), "", desired)
+	if err != nil {
+		t.Fatalf("Doctor: %v", err)
+	}
+	if len(diagnoses) != 1 || diagnoses[0].ResourceID != "ancient-pkg" {
+		t.Fatalf("got %+v, want a single diagnosis for \"ancient-pkg\" (AUR packages aren't checked)", diagnoses)
 	}
 }

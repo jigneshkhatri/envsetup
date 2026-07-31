@@ -96,6 +96,24 @@ func PrintValidation(w io.Writer, results []core.ValidationResult) {
 	fmt.Fprintf(w, "\n%d resource(s) drifted from the project.\n", drifted)
 }
 
+// PrintDoctor renders the findings from `envsetup doctor`.
+func PrintDoctor(w io.Writer, diagnoses []core.Diagnosis) {
+	if len(diagnoses) == 0 {
+		fmt.Fprintln(w, "No issues found.")
+		return
+	}
+
+	for _, d := range sortedDiagnoses(diagnoses) {
+		if d.ResourceID != "" {
+			fmt.Fprintln(w, yellow(fmt.Sprintf("  ! %s.%s: %s", d.ResourceType, d.ResourceID, d.Message)))
+			continue
+		}
+		fmt.Fprintln(w, yellow(fmt.Sprintf("  ! %s: %s", d.ResourceType, d.Message)))
+	}
+
+	fmt.Fprintf(w, "\n%d issue(s) found.\n", len(diagnoses))
+}
+
 func sortedTypeKeys(found map[string][]core.Resource) []string {
 	keys := make([]string, 0, len(found))
 	for k := range found {
@@ -136,6 +154,18 @@ func sortedActions(actions []core.Action) []core.Action {
 func sortedValidationResults(results []core.ValidationResult) []core.ValidationResult {
 	sorted := make([]core.ValidationResult, len(results))
 	copy(sorted, results)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].ResourceType != sorted[j].ResourceType {
+			return sorted[i].ResourceType < sorted[j].ResourceType
+		}
+		return sorted[i].ResourceID < sorted[j].ResourceID
+	})
+	return sorted
+}
+
+func sortedDiagnoses(diagnoses []core.Diagnosis) []core.Diagnosis {
+	sorted := make([]core.Diagnosis, len(diagnoses))
+	copy(sorted, diagnoses)
 	sort.Slice(sorted, func(i, j int) bool {
 		if sorted[i].ResourceType != sorted[j].ResourceType {
 			return sorted[i].ResourceType < sorted[j].ResourceType

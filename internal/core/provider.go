@@ -103,3 +103,26 @@ type Provider interface {
 type UserDeclaredProvider interface {
 	UserDeclared() bool
 }
+
+// Diagnosis is one health-check finding reported by `envsetup doctor`.
+// Unlike ValidationResult, a Diagnosis isn't about drift from desired state
+// -- it's a problem that would make drift detection or apply unreliable in
+// the first place (a broken symlink, an unreachable remote, a package no
+// longer available to install).
+type Diagnosis struct {
+	ResourceType string
+	// ResourceID is empty for a project-wide finding not tied to one
+	// resource (e.g. a schema problem).
+	ResourceID string
+	Message    string
+}
+
+// DoctorProvider is implemented by a Provider offering additional health
+// diagnostics beyond drift detection. Optional: not every provider needs
+// bespoke checks, so the engine type-asserts for this rather than making it
+// part of the core Provider interface.
+type DoctorProvider interface {
+	// Doctor inspects desired resources of this type and reports any
+	// problems found. Never modifies anything.
+	Doctor(ctx context.Context, projectDir string, desired []ProjectResource) ([]Diagnosis, error)
+}

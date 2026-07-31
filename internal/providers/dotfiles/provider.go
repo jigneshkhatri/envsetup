@@ -243,3 +243,35 @@ func hashContent(content []byte) string {
 	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])
 }
+
+// Doctor reports symlinked dotfiles whose target no longer exists -- e.g.
+// the project's files/ tree entry was deleted by hand, or the project
+// directory itself moved without updating the symlink.
+func (p *Provider) Doctor(ctx context.Context, projectDir string, desired []core.ProjectResource) ([]core.Diagnosis, error) {
+	var diagnoses []core.Diagnosis
+
+	for _, d := range desired {
+		strategy, _ := d.Attributes["strategy"].(string)
+		if strategy != "symlink" {
+			continue
+		}
+
+		targetPath := filepath.Join(p.homeDir, d.ID)
+		linkDest, err := os.Readlink(targetPath)
+		if err != nil {
+			// Not a symlink, or missing entirely -- Validate already
+			// reports plain drift for that; doctor's job is the more
+			// specific "symlink exists but points nowhere" case.
+			continue
+		}
+
+		if _, statErr := os.Stat(linkDest); statErr != nil {
+			diagnoses = append(diagnoses, core.Diagnosis{
+				ResourceType: p.Type(), ResourceID: d.ID,
+				Message: fmt.Sprintf("symlink target %s does not exist (broken symlink)", linkDest),
+			})
+		}
+	}
+
+	return diagnoses, nil
+}

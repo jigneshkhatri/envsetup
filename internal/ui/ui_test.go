@@ -96,3 +96,32 @@ func TestPrintValidationDrift(t *testing.T) {
 		t.Errorf("got %q", out)
 	}
 }
+
+func TestPrintDoctorNoIssues(t *testing.T) {
+	var buf bytes.Buffer
+	PrintDoctor(&buf, nil)
+	if !strings.Contains(buf.String(), "No issues found") {
+		t.Errorf("got %q", buf.String())
+	}
+}
+
+func TestPrintDoctorIssues(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+
+	var buf bytes.Buffer
+	PrintDoctor(&buf, []core.Diagnosis{
+		{ResourceType: "dotfiles", ResourceID: ".zshrc", Message: "broken symlink"},
+		{ResourceType: "packages", Message: "project-wide finding"},
+	})
+
+	out := buf.String()
+	if !strings.Contains(out, "dotfiles..zshrc: broken symlink") {
+		t.Errorf("missing resource-scoped diagnosis: %q", out)
+	}
+	if !strings.Contains(out, "packages: project-wide finding") {
+		t.Errorf("missing project-wide diagnosis: %q", out)
+	}
+	if !strings.Contains(out, "2 issue(s) found") {
+		t.Errorf("missing summary: %q", out)
+	}
+}

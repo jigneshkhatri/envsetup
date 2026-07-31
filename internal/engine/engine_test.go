@@ -434,3 +434,62 @@ func TestApplyAllowUpdateOnlyRunsUpdatesNotDeletes(t *testing.T) {
 		t.Error("widget-b was removed despite AllowRemove not being set")
 	}
 }
+
+func TestDoctorFindsBlankAndDuplicateIDs(t *testing.T) {
+	ctx := context.Background()
+
+	reg := registry.New()
+	proj := project.New(t.TempDir(), "test-project")
+	proj.SetResourcesFor("widget", []core.ProjectResource{
+		{ID: "widget-a"},
+		{ID: "widget-a"}, // duplicate
+		{ID: ""},         // blank
+	})
+
+	e := New(reg, proj, core.SystemContext{})
+
+	diagnoses, err := e.Doctor(ctx)
+	if err != nil {
+		t.Fatalf("Doctor: %v", err)
+	}
+	if len(diagnoses) != 2 {
+		t.Fatalf("got %d diagnoses, want 2 (blank + duplicate): %+v", len(diagnoses), diagnoses)
+	}
+}
+
+// doctorFakeProvider implements core.DoctorProvider to prove the engine
+// dispatches to provider-specific checks via the type assertion.
+type doctorFakeProvider struct {
+	fakeProvider
+}
+
+func (f *doctorFakeProvider) Doctor(ctx context.Context, projectDir string, desired []core.ProjectResource) ([]core.Diagnosis, error) {
+	var diagnoses []core.Diagnosis
+	for _, d := range desired {
+		diagnoses = append(diagnoses, core.Diagnosis{ResourceType: f.Type(), ResourceID: d.ID, Message: "fake problem"})
+	}
+	return diagnoses, nil
+}
+
+func TestDoctorDispatchesToProviderSpecificChecks(t *testing.T) {
+	ctx := context.Background()
+
+	fake := &doctorFakeProvider{fakeProvider{system: map[string]string{}}}
+	reg := registry.New()
+	if err := reg.Register(fake); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	proj := project.New(t.TempDir(), "test-project")
+	proj.SetResourcesFor("widget", []core.ProjectResource{{ID: "widget-a"}})
+
+	e := New(reg, proj, core.SystemContext{})
+
+	diagnoses, err := e.Doctor(ctx)
+	if err != nil {
+		t.Fatalf("Doctor: %v", err)
+	}
+	if len(diagnoses) != 1 || diagnoses[0].Message != "fake problem" {
+		t.Fatalf("got %+v, want one fake problem", diagnoses)
+	}
+}

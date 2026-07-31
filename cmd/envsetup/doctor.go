@@ -1,33 +1,36 @@
 package main
 
 import (
-	"fmt"
+	"context"
 
 	"github.com/spf13/cobra"
+
+	"github.com/jigneshkhatri/envsetup/internal/engine"
+	"github.com/jigneshkhatri/envsetup/internal/ui"
 )
 
-// newDoctorCmd is intentionally minimal for now: real cross-provider
-// diagnostics (broken symlinks, orphaned resources, project schema
-// validation, ...) are Phase 9 work, once there are real providers to
-// diagnose. This wires the command and proves it behaves sensibly with an
-// empty registry.
 func newDoctorCmd(app *App) *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
 		Short: "Diagnose the project and workstation for common problems",
+		Long: "Doctor never modifies anything. Exit code 0 means no issues were\n" +
+			"found, 2 means issues were found, 1 means an error occurred.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, absDir, err := loadProjectOrHint(cmd)
+			proj, _, err := loadProjectOrHint(cmd)
 			if err != nil {
-				fmt.Fprintln(app.Out, err)
-				return nil
+				return err
 			}
 
-			if len(app.Registry.All()) == 0 {
-				fmt.Fprintln(app.Out, "No providers registered yet -- nothing to diagnose.")
-				return nil
+			e := engine.New(app.Registry, proj, systemContext())
+			diagnoses, err := e.Doctor(context.Background())
+			if err != nil {
+				return err
 			}
 
-			fmt.Fprintf(app.Out, "No issues found in %s.\n", absDir)
+			ui.PrintDoctor(app.Out, diagnoses)
+			if len(diagnoses) > 0 {
+				app.ExitCode = 2
+			}
 			return nil
 		},
 	}
