@@ -75,7 +75,11 @@ func newExportCmd(app *App) *cobra.Command {
 func reviewLowConfidence(app *App, r engine.ExportResult) ([]core.ProjectResource, error) {
 	excluded := make(map[string]bool)
 	for _, res := range r.NeedsReview {
-		prompt := fmt.Sprintf("Include %s %q (confidence: %s)? [y/N] ", r.Type, res.ID, res.Confidence)
+		detail := fmt.Sprintf("confidence: %s", res.Confidence)
+		if fc, ok := res.Attributes["file_count"]; ok {
+			detail = fmt.Sprintf("%s, %v files", detail, fc)
+		}
+		prompt := fmt.Sprintf("Include %s %q (%s)? [y/N] ", r.Type, res.ID, detail)
 		ok, err := ui.Confirm(app.In, app.Out, prompt, false)
 		if err != nil {
 			return nil, err

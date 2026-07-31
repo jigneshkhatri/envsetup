@@ -21,30 +21,335 @@ func writeHomeFile(t *testing.T, home, rel, content string) {
 	}
 }
 
-func TestDiscoverFindsOnlyExistingKnownFiles(t *testing.T) {
+func TestDiscoverBlanketScansTopLevelHomeDotfiles(t *testing.T) {
 	home := t.TempDir()
 	writeHomeFile(t, home, ".zshrc", "export PATH=$PATH:/foo\n")
-	writeHomeFile(t, home, ".config/nvim/init.lua", "-- nvim config\n")
-	// Everything else in KnownPaths is deliberately left absent.
+	writeHomeFile(t, home, ".config-of-my-own.conf", "not actually in .config\n")
+	writeHomeFile(t, home, "not-a-dotfile.txt", "should never be picked up\n")
 
 	p := newWithHome(home)
 	resources, err := p.Discover(context.Background(), core.SystemContext{})
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
-	if len(resources) != 2 {
-		t.Fatalf("got %d resources, want 2: %+v", len(resources), resources)
+
+	byID := make(map[string]core.Resource, len(resources))
+	for _, r := range resources {
+		byID[r.ID] = r
+	}
+
+	for _, id := range []string{".zshrc", ".config-of-my-own.conf"} {
+		r, ok := byID[id]
+		if !ok {
+			t.Errorf("missing %s resource", id)
+			continue
+		}
+		if r.Confidence != core.ConfidenceHigh {
+			t.Errorf("%s confidence = %v, want high", id, r.Confidence)
+		}
+		if r.Attributes["kind"] != "file" {
+			t.Errorf("%s kind = %v, want file", id, r.Attributes["kind"])
+		}
+	}
+	if _, ok := byID["not-a-dotfile.txt"]; ok {
+		t.Error("non-dotfile should never be discovered")
+	}
+}
+
+func TestDiscoverExcludesSensitiveTopLevelHomeFiles(t *testing.T) {
+	home := t.TempDir()
+	writeHomeFile(t, home, ".netrc", "machine example.com login me password secret\n")
+	writeHomeFile(t, home, ".bash_history", "curl -H 'Authorization: Bearer secret'\n")
+	writeHomeFile(t, home, ".zshrc", "safe content\n")
+
+	p := newWithHome(home)
+	resources, err := p.Discover(context.Background(), core.SystemContext{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	for _, r := range resources {
+		if r.ID == ".netrc" || r.ID == ".bash_history" {
+			t.Fatalf("sensitive file %s was discovered: %+v", r.ID, r)
+		}
+	}
+
+	found := false
+	for _, r := range resources {
+		if r.ID == ".zshrc" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error(".zshrc should still be discovered")
+	}
+}
+
+// TestDiscoverExcludesPrivateModeFiles locks in the permission-based
+// heuristic found during real-world verification: a file only readable by
+// its owner (e.g. mode 0600) is skipped regardless of name, since that
+// pattern strongly signals a credential or session file (as with the real
+// $HOME/.claude.json and .config/pulse/cookie found on a live desktop).
+func TestDiscoverExcludesPrivateModeFiles(t *testing.T) {
+	home := t.TempDir()
+	writeHomeFile(t, home, ".some-tool-session.json", `{"oauthToken":"secret"}`)
+	if err := os.Chmod(filepath.Join(home, ".some-tool-session.json"), 0o600); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	writeHomeFile(t, home, ".zshrc", "safe content\n") // default 0644
+
+	p := newWithHome(home)
+	resources, err := p.Discover(context.Background(), core.SystemContext{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
 	}
 
 	byID := make(map[string]core.Resource, len(resources))
 	for _, r := range resources {
 		byID[r.ID] = r
 	}
-	if _, ok := byID[".zshrc"]; !ok {
-		t.Error("missing .zshrc resource")
+	if _, ok := byID[".some-tool-session.json"]; ok {
+		t.Error("private-mode (0600) file should never be discovered")
 	}
-	if r := byID[".config/nvim/init.lua"]; r.Confidence != core.ConfidenceHigh {
-		t.Errorf("confidence = %v, want high", r.Confidence)
+	if _, ok := byID[".zshrc"]; !ok {
+		t.Error("world-readable .zshrc should still be discovered")
+	}
+}
+
+// TestDiscoverExcludesPrivateModeDirectoriesInAppTree covers the same
+// heuristic one level in: a subdirectory within an otherwise-included app
+// config (e.g. a browser profile directory) that's locked down to the
+// owner should be skipped, along with everything inside it, even though
+// the app directory itself is included.
+func TestDiscoverExcludesPrivateModeDirectoriesInAppTree(t *testing.T) {
+	home := t.TempDir()
+	writeHomeFile(t, home, ".config/someapp/settings.json", `{"real":"config"}`)
+	writeHomeFile(t, home, ".config/someapp/profile/cookies.sqlite-not-really", "session data")
+	if err := os.Chmod(filepath.Join(home, ".config/someapp/profile"), 0o700); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+
+	p := newWithHome(home)
+	resources, err := p.Discover(context.Background(), core.SystemContext{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(resources) != 1 {
+		t.Fatalf("got %d resources, want 1: %+v", len(resources), resources)
+	}
+	if fc := resources[0].Attributes["file_count"]; fc != 1 {
+		t.Errorf("file_count = %v, want 1 (the private profile/ subdirectory should be excluded entirely)", fc)
+	}
+}
+
+func TestDiscoverNeverBlanketIncludesTopLevelDirectories(t *testing.T) {
+	home := t.TempDir()
+	writeHomeFile(t, home, ".ssh/id_rsa", "-----BEGIN OPENSSH PRIVATE KEY-----\n")
+	writeHomeFile(t, home, ".gnupg/secring.gpg", "fake key material\n")
+
+	p := newWithHome(home)
+	resources, err := p.Discover(context.Background(), core.SystemContext{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(resources) != 0 {
+		t.Fatalf("top-level dot-directories should never be scanned, got: %+v", resources)
+	}
+}
+
+func TestDiscoverConfigDirectFiles(t *testing.T) {
+	home := t.TempDir()
+	writeHomeFile(t, home, ".config/mimeapps.list", "[Default Applications]\n")
+
+	p := newWithHome(home)
+	resources, err := p.Discover(context.Background(), core.SystemContext{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(resources) != 1 || resources[0].ID != ".config/mimeapps.list" {
+		t.Fatalf("got %+v, want a single .config/mimeapps.list resource", resources)
+	}
+	if resources[0].Confidence != core.ConfidenceHigh {
+		t.Errorf("confidence = %v, want high", resources[0].Confidence)
+	}
+}
+
+func TestDiscoverGroupsConfigAppDirectoryAsSingleResource(t *testing.T) {
+	home := t.TempDir()
+	writeHomeFile(t, home, ".config/waybar/config", "{}\n")
+	writeHomeFile(t, home, ".config/waybar/style.css", "* {}\n")
+
+	p := newWithHome(home)
+	resources, err := p.Discover(context.Background(), core.SystemContext{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(resources) != 1 {
+		t.Fatalf("got %d resources, want 1 grouped resource: %+v", len(resources), resources)
+	}
+
+	r := resources[0]
+	if r.ID != ".config/waybar" {
+		t.Errorf("ID = %q, want .config/waybar", r.ID)
+	}
+	if r.Attributes["kind"] != "dir" {
+		t.Errorf("kind = %v, want dir", r.Attributes["kind"])
+	}
+	if r.Confidence != core.ConfidenceMedium {
+		t.Errorf("confidence = %v, want medium", r.Confidence)
+	}
+	if r.Attributes["file_count"] != 2 {
+		t.Errorf("file_count = %v, want 2", r.Attributes["file_count"])
+	}
+}
+
+func TestDiscoverFiltersJunkWithinAppDirectory(t *testing.T) {
+	home := t.TempDir()
+	writeHomeFile(t, home, ".config/someapp/settings.json", `{"real":"config"}`)
+	writeHomeFile(t, home, ".config/someapp/Cache/blob-data", "junk")
+	writeHomeFile(t, home, ".config/someapp/state.sqlite", "junk")
+	writeHomeFile(t, home, ".config/someapp/SingletonLock", "junk")
+
+	p := newWithHome(home)
+	resources, err := p.Discover(context.Background(), core.SystemContext{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(resources) != 1 {
+		t.Fatalf("got %d resources, want 1: %+v", len(resources), resources)
+	}
+	if fc := resources[0].Attributes["file_count"]; fc != 1 {
+		t.Errorf("file_count = %v, want 1 (only settings.json should survive filtering)", fc)
+	}
+}
+
+func TestDiscoverExcludesKnownConfigApps(t *testing.T) {
+	home := t.TempDir()
+	writeHomeFile(t, home, ".config/discord/settings.json", "{}\n")
+	writeHomeFile(t, home, ".config/google-chrome/Preferences", "{}\n")
+
+	p := newWithHome(home)
+	resources, err := p.Discover(context.Background(), core.SystemContext{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(resources) != 0 {
+		t.Fatalf("excluded apps should never be discovered, got: %+v", resources)
+	}
+}
+
+func TestDiscoverRespectsMaxWalkDepth(t *testing.T) {
+	home := t.TempDir()
+	// depth 1..4 relative to the app root should be included; deeper than
+	// that should not.
+	writeHomeFile(t, home, ".config/deepapp/a/b/c/shallow-enough.conf", "included\n")
+	writeHomeFile(t, home, ".config/deepapp/a/b/c/d/e/too-deep.conf", "excluded\n")
+
+	p := newWithHome(home)
+	resources, err := p.Discover(context.Background(), core.SystemContext{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(resources) != 1 {
+		t.Fatalf("got %d resources, want 1: %+v", len(resources), resources)
+	}
+	if fc := resources[0].Attributes["file_count"]; fc != 1 {
+		t.Errorf("file_count = %v, want 1 (the too-deep file should be excluded)", fc)
+	}
+}
+
+func TestExportAndApplyRoundTripDirResource(t *testing.T) {
+	home := t.TempDir()
+	projectDir := t.TempDir()
+	writeHomeFile(t, home, ".config/waybar/config", "{}\n")
+	writeHomeFile(t, home, ".config/waybar/style.css", "* {}\n")
+
+	p := newWithHome(home)
+	ctx := context.Background()
+
+	discovered, err := p.Discover(ctx, core.SystemContext{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	exported, err := p.Export(ctx, projectDir, discovered)
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if len(exported) != 1 {
+		t.Fatalf("got %d exported, want 1", len(exported))
+	}
+
+	for _, rel := range []string{"config", "style.css"} {
+		got, err := os.ReadFile(filepath.Join(project.FilesDir(projectDir), ".config/waybar", rel))
+		if err != nil {
+			t.Fatalf("reading exported %s: %v", rel, err)
+		}
+		if len(got) == 0 {
+			t.Errorf("%s exported empty", rel)
+		}
+	}
+
+	// Simulate a clean reinstall: remove the live directory, then apply the
+	// single create action for the whole group.
+	if err := os.RemoveAll(filepath.Join(home, ".config/waybar")); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
+	}
+
+	actions, err := p.Plan(ctx, exported, nil)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(actions) != 1 || actions[0].Kind != core.ActionCreate || actions[0].Attributes["kind"] != "dir" {
+		t.Fatalf("got %+v, want a single dir create action", actions)
+	}
+
+	if err := p.Apply(ctx, projectDir, actions[0]); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(home, ".config/waybar/config"))
+	if err != nil {
+		t.Fatalf("reading reinstalled file: %v", err)
+	}
+	if string(got) != "{}\n" {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestApplyDirDeleteRemovesWholeTree(t *testing.T) {
+	home := t.TempDir()
+	writeHomeFile(t, home, ".config/waybar/config", "{}\n")
+	writeHomeFile(t, home, ".config/waybar/style.css", "* {}\n")
+
+	p := newWithHome(home)
+	action := core.Action{
+		ResourceID: ".config/waybar", Kind: core.ActionDelete,
+		Attributes: map[string]any{"kind": "dir"},
+	}
+	if err := p.Apply(context.Background(), t.TempDir(), action); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config/waybar")); !os.IsNotExist(err) {
+		t.Error(".config/waybar should have been removed entirely")
+	}
+}
+
+func TestValidateDetectsDirDrift(t *testing.T) {
+	home := t.TempDir()
+	writeHomeFile(t, home, ".config/waybar/config", "changed\n")
+
+	p := newWithHome(home)
+	files := map[string][]byte{"config": []byte("original\n")}
+	desired := []core.ProjectResource{
+		{ID: ".config/waybar", Attributes: map[string]any{"kind": "dir", "content_hash": hashTree(files)}},
+	}
+
+	results, err := p.Validate(context.Background(), desired)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if len(results) != 1 || !results[0].Drifted {
+		t.Fatalf("got %+v, want drifted", results)
 	}
 }
 
