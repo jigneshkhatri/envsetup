@@ -6,17 +6,24 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jigneshkhatri/envsetup/internal/core"
 	"github.com/jigneshkhatri/envsetup/internal/engine"
 	"github.com/jigneshkhatri/envsetup/internal/ui"
 )
 
 func newApplyCmd(app *App) *cobra.Command {
-	var yes, dryRun bool
+	var yes, dryRun, allowUpdate, allowRemove bool
 	var only []string
 
 	cmd := &cobra.Command{
 		Use:   "apply",
 		Short: "Reconcile the workstation with the project",
+		Long: "By default, apply only fills in resources that are declared but\n" +
+			"missing -- it never overrides or removes configuration already on\n" +
+			"the host. Pass --allow-update to let it overwrite drifted resources\n" +
+			"(e.g. a dotfile whose content changed), and --allow-remove to let it\n" +
+			"remove resources that exist but aren't declared (e.g. uninstall a\n" +
+			"package, disable a service).",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			proj, _, err := loadProjectOrHint(cmd)
 			if err != nil {
@@ -24,22 +31,33 @@ func newApplyCmd(app *App) *cobra.Command {
 			}
 
 			e := engine.New(app.Registry, proj, systemContext())
+			opts := engine.ApplyOptions{Only: only, AllowUpdate: allowUpdate, AllowRemove: allowRemove}
 
 			// Apply always re-diffs before doing anything -- there is no
 			// path to mutate the system without a fresh plan.
-			preview, err := e.Apply(context.Background(), engine.ApplyOptions{Only: only, DryRun: true})
+			previewOpts := opts
+			previewOpts.DryRun = true
+			preview, err := e.Apply(context.Background(), previewOpts)
 			if err != nil {
 				return err
 			}
 
-			ui.PrintPlan(app.Out, preview)
+			ui.PrintPlan(app.Out, append(append([]core.Action{}, preview.Applied...), preview.Skipped...))
 
-			if len(preview) == 0 || dryRun {
+			if len(preview.Skipped) > 0 {
+				fmt.Fprintf(app.Out, "\n%d action(s) skipped by default (pass --allow-update and/or --allow-remove to include them).\n", len(preview.Skipped))
+			}
+
+			if len(preview.Applied) == 0 {
+				fmt.Fprintln(app.Out, "\nNothing to apply.")
+				return nil
+			}
+			if dryRun {
 				return nil
 			}
 
 			if !yes {
-				ok, err := ui.Confirm(app.In, app.Out, fmt.Sprintf("\nApply these %d action(s)? [y/N] ", len(preview)), false)
+				ok, err := ui.Confirm(app.In, app.Out, fmt.Sprintf("\nApply these %d action(s)? [y/N] ", len(preview.Applied)), false)
 				if err != nil {
 					return err
 				}
@@ -49,14 +67,16 @@ func newApplyCmd(app *App) *cobra.Command {
 				}
 			}
 
-			applied, applyErr := e.Apply(context.Background(), engine.ApplyOptions{Only: only})
-			fmt.Fprintf(app.Out, "\nApplied %d action(s).\n", len(applied))
+			result, applyErr := e.Apply(context.Background(), opts)
+			fmt.Fprintf(app.Out, "\nApplied %d action(s).\n", len(result.Applied))
 			return applyErr
 		},
 	}
 
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "apply without interactive confirmation")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show the plan without applying it")
+	cmd.Flags().BoolVar(&allowUpdate, "allow-update", false, "allow overwriting resources that already exist but have drifted")
+	cmd.Flags().BoolVar(&allowRemove, "allow-remove", false, "allow removing resources that exist but aren't declared in the project")
 	cmd.Flags().StringSliceVar(&only, "only", nil, "restrict apply to these resource types")
 	return cmd
 }

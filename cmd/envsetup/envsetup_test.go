@@ -48,6 +48,10 @@ func (p *testProvider) Plan(ctx context.Context, desired []core.ProjectResource,
 	for _, c := range current {
 		currentIDs[c.ID] = true
 	}
+	desiredIDs := make(map[string]bool, len(desired))
+	for _, d := range desired {
+		desiredIDs[d.ID] = true
+	}
 
 	var actions []core.Action
 	for _, d := range desired {
@@ -58,13 +62,24 @@ func (p *testProvider) Plan(ctx context.Context, desired []core.ProjectResource,
 			})
 		}
 	}
+	for _, c := range current {
+		if !desiredIDs[c.ID] {
+			actions = append(actions, core.Action{
+				ResourceType: p.Type(), ResourceID: c.ID, Kind: core.ActionDelete,
+				Description: "delete " + c.ID,
+			})
+		}
+	}
 	return actions, nil
 }
 
 func (p *testProvider) Apply(ctx context.Context, projectDir string, action core.Action) error {
-	if action.Kind == core.ActionCreate {
+	switch action.Kind {
+	case core.ActionCreate:
 		value, _ := action.Attributes["value"].(string)
 		p.system[action.ResourceID] = value
+	case core.ActionDelete:
+		delete(p.system, action.ResourceID)
 	}
 	return nil
 }
@@ -176,6 +191,44 @@ func TestCLILifecycle(t *testing.T) {
 	out.Reset()
 	if err := execute(t, app, "doctor", "--project", projectDir); err != nil {
 		t.Fatalf("doctor: %v\n%s", err, out)
+	}
+}
+
+// TestApplyDefaultNeverRemovesUndeclaredResources confirms the safety
+// default end to end through the CLI: a resource present on the "system"
+// but not declared in the project must survive a plain `apply`, and only
+// go away once --allow-remove is passed.
+func TestApplyDefaultNeverRemovesUndeclaredResources(t *testing.T) {
+	dir := t.TempDir()
+	projectDir := filepath.Join(dir, "proj")
+
+	// Nothing declared in the project, but "widget-a" already exists on
+	// the system -- simulates a real machine with existing state that was
+	// never captured into the project.
+	system := map[string]string{"widget-a": "v1"}
+	app, out := newTestApp(t, system)
+
+	if err := execute(t, app, "init", projectDir); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	out.Reset()
+	if err := execute(t, app, "apply", "--project", projectDir, "--yes"); err != nil {
+		t.Fatalf("apply: %v\n%s", err, out)
+	}
+	if _, ok := system["widget-a"]; !ok {
+		t.Fatalf("default apply removed an undeclared resource: %+v", system)
+	}
+	if !strings.Contains(out.String(), "skipped by default") {
+		t.Errorf("expected a skipped-by-default hint, got %q", out.String())
+	}
+
+	out.Reset()
+	if err := execute(t, app, "apply", "--project", projectDir, "--yes", "--allow-remove"); err != nil {
+		t.Fatalf("apply --allow-remove: %v\n%s", err, out)
+	}
+	if _, ok := system["widget-a"]; ok {
+		t.Errorf("--allow-remove did not remove the undeclared resource: %+v", system)
 	}
 }
 

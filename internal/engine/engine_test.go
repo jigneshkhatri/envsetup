@@ -180,13 +180,18 @@ func TestEngineLifecycle(t *testing.T) {
 		t.Fatalf("Plan after drift: got %d actions, want 3: %+v", len(actions), actions)
 	}
 
-	// Apply reconciles everything in one pass.
-	applied, err := e.Apply(ctx, ApplyOptions{})
+	// Apply reconciles everything in one pass -- AllowUpdate/AllowRemove
+	// are both required here since the drift includes an update
+	// (widget-a's value changed) and a delete (widget-b was removed).
+	result, err := e.Apply(ctx, ApplyOptions{AllowUpdate: true, AllowRemove: true})
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	if len(applied) != 3 {
-		t.Fatalf("Apply: executed %d actions, want 3", len(applied))
+	if len(result.Applied) != 3 {
+		t.Fatalf("Apply: executed %d actions, want 3", len(result.Applied))
+	}
+	if len(result.Skipped) != 0 {
+		t.Fatalf("Apply: unexpectedly skipped %+v", result.Skipped)
 	}
 
 	// Validate: no drift remains.
@@ -232,12 +237,12 @@ func TestApplyDryRunExecutesNothing(t *testing.T) {
 
 	e := New(reg, proj, core.SystemContext{})
 
-	actions, err := e.Apply(ctx, ApplyOptions{DryRun: true})
+	result, err := e.Apply(ctx, ApplyOptions{DryRun: true})
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	if len(actions) != 1 {
-		t.Fatalf("Apply: got %d planned actions, want 1", len(actions))
+	if len(result.Applied) != 1 {
+		t.Fatalf("Apply: got %d planned actions, want 1", len(result.Applied))
 	}
 	if len(system) != 0 {
 		t.Fatalf("Apply: dry-run mutated system state: %+v", system)
@@ -262,12 +267,12 @@ func TestApplyOnlyFiltersByType(t *testing.T) {
 
 	e := New(reg, proj, core.SystemContext{})
 
-	actions, err := e.Apply(ctx, ApplyOptions{Only: []string{"nonexistent-type"}})
+	result, err := e.Apply(ctx, ApplyOptions{Only: []string{"nonexistent-type"}})
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	if len(actions) != 0 {
-		t.Fatalf("Apply: got %d actions, want 0 after filtering out all types", len(actions))
+	if len(result.Applied) != 0 {
+		t.Fatalf("Apply: got %d actions, want 0 after filtering out all types", len(result.Applied))
 	}
 	if len(system) != 0 {
 		t.Fatalf("Apply: filtered-out action still executed: %+v", system)
@@ -336,5 +341,96 @@ func TestExportSkipsUserDeclaredProviders(t *testing.T) {
 	}
 	if got := proj.ResourcesFor("recipes"); len(got) != 1 {
 		t.Fatalf("hand-authored recipes entry was touched: %+v", got)
+	}
+}
+
+// TestApplyDefaultOnlyRunsCreateActions is the core safety guarantee: by
+// default, apply must never override or remove configuration already on
+// the host -- only fill in what's missing. Update and Delete actions
+// should be reported as skipped, not executed, unless explicitly allowed.
+func TestApplyDefaultOnlyRunsCreateActions(t *testing.T) {
+	ctx := context.Background()
+
+	system := map[string]string{
+		"widget-a": "v1", // desired wants a different value -> update
+		"widget-b": "v1", // not desired -> delete
+	}
+	fake := newFakeProvider(system)
+
+	reg := registry.New()
+	if err := reg.Register(fake); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	proj := project.New(t.TempDir(), "test-project")
+	proj.SetResourcesFor("widget", []core.ProjectResource{
+		{ID: "widget-a", Attributes: map[string]any{"value": "v2"}}, // drifted value
+		{ID: "widget-c", Attributes: map[string]any{"value": "v1"}}, // missing -> create
+	})
+
+	e := New(reg, proj, core.SystemContext{})
+
+	result, err := e.Apply(ctx, ApplyOptions{})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	if len(result.Applied) != 1 || result.Applied[0].ResourceID != "widget-c" || result.Applied[0].Kind != core.ActionCreate {
+		t.Fatalf("Applied = %+v, want only the widget-c create", result.Applied)
+	}
+	if len(result.Skipped) != 2 {
+		t.Fatalf("Skipped = %+v, want 2 (the update and the delete)", result.Skipped)
+	}
+
+	// The host's existing state must be untouched except for the new
+	// widget-c.
+	if system["widget-a"] != "v1" {
+		t.Errorf("widget-a was modified despite AllowUpdate not being set: %q", system["widget-a"])
+	}
+	if _, exists := system["widget-b"]; !exists {
+		t.Error("widget-b was removed despite AllowRemove not being set")
+	}
+	if system["widget-c"] != "v1" {
+		t.Errorf("widget-c create did not run: %+v", system)
+	}
+}
+
+func TestApplyAllowUpdateOnlyRunsUpdatesNotDeletes(t *testing.T) {
+	ctx := context.Background()
+
+	system := map[string]string{
+		"widget-a": "v1", // drifted -> update
+		"widget-b": "v1", // not desired -> delete
+	}
+	fake := newFakeProvider(system)
+
+	reg := registry.New()
+	if err := reg.Register(fake); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	proj := project.New(t.TempDir(), "test-project")
+	proj.SetResourcesFor("widget", []core.ProjectResource{
+		{ID: "widget-a", Attributes: map[string]any{"value": "v2"}},
+	})
+
+	e := New(reg, proj, core.SystemContext{})
+
+	result, err := e.Apply(ctx, ApplyOptions{AllowUpdate: true})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	if len(result.Applied) != 1 || result.Applied[0].Kind != core.ActionUpdate {
+		t.Fatalf("Applied = %+v, want only the widget-a update", result.Applied)
+	}
+	if len(result.Skipped) != 1 || result.Skipped[0].Kind != core.ActionDelete {
+		t.Fatalf("Skipped = %+v, want only the widget-b delete", result.Skipped)
+	}
+	if system["widget-a"] != "v2" {
+		t.Errorf("widget-a was not updated: %q", system["widget-a"])
+	}
+	if _, exists := system["widget-b"]; !exists {
+		t.Error("widget-b was removed despite AllowRemove not being set")
 	}
 }

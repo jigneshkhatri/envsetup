@@ -122,16 +122,42 @@ func (e *Engine) Plan(ctx context.Context) ([]core.Action, error) {
 type ApplyOptions struct {
 	// Only restricts apply to these resource types. Empty means all types.
 	Only []string
-	// DryRun computes the plan but executes nothing.
+	// DryRun computes the result but executes nothing.
 	DryRun bool
+	// AllowUpdate permits executing Update actions -- e.g. overwriting a
+	// drifted dotfile's content, or checking out a different git ref.
+	// Without it, Update actions are reported in Skipped but never
+	// executed: apply never silently overrides configuration already on
+	// the host.
+	AllowUpdate bool
+	// AllowRemove permits executing Delete actions -- e.g. uninstalling a
+	// package, or disabling a service. Without it, Delete actions are
+	// reported in Skipped but never executed: apply never silently
+	// removes configuration already on the host.
+	AllowRemove bool
+}
+
+// ApplyResult is what Apply executed (or would execute, under DryRun) and
+// what it deliberately left alone.
+type ApplyResult struct {
+	// Applied are the actions that were executed (or would be, under
+	// DryRun): every Create action, plus Update/Delete actions only if
+	// explicitly allowed.
+	Applied []core.Action
+	// Skipped are Update/Delete actions that were part of the plan but
+	// left untouched because AllowUpdate/AllowRemove wasn't set.
+	Skipped []core.Action
 }
 
 // Apply always recomputes the plan first -- there is no path to mutate the
-// system without a fresh diff -- then executes each action in order. It
-// continues past a failed action so one resource's failure does not block
-// unrelated resources, returning every action it attempted alongside an
-// aggregate error, if any.
-func (e *Engine) Apply(ctx context.Context, opts ApplyOptions) ([]core.Action, error) {
+// system without a fresh diff. By default only Create actions run (filling
+// in resources that are declared but missing); Update and Delete actions
+// require their respective opt-in flag, so apply never overrides or
+// removes configuration already on the host unless explicitly told to.
+// Among the actions that do run, Apply continues past a failure so one
+// resource's failure does not block unrelated resources, returning every
+// action it attempted alongside an aggregate error, if any.
+func (e *Engine) Apply(ctx context.Context, opts ApplyOptions) (*ApplyResult, error) {
 	actions, err := e.Plan(ctx)
 	if err != nil {
 		return nil, err
@@ -152,12 +178,29 @@ func (e *Engine) Apply(ctx context.Context, opts ApplyOptions) ([]core.Action, e
 		actions = filtered
 	}
 
+	result := &ApplyResult{}
+	for _, a := range actions {
+		switch a.Kind {
+		case core.ActionUpdate:
+			if !opts.AllowUpdate {
+				result.Skipped = append(result.Skipped, a)
+				continue
+			}
+		case core.ActionDelete:
+			if !opts.AllowRemove {
+				result.Skipped = append(result.Skipped, a)
+				continue
+			}
+		}
+		result.Applied = append(result.Applied, a)
+	}
+
 	if opts.DryRun {
-		return actions, nil
+		return result, nil
 	}
 
 	var errs []error
-	for _, a := range actions {
+	for _, a := range result.Applied {
 		p, ok := e.Registry.Get(a.ResourceType)
 		if !ok {
 			errs = append(errs, fmt.Errorf("engine: no provider registered for type %q", a.ResourceType))
@@ -168,7 +211,7 @@ func (e *Engine) Apply(ctx context.Context, opts ApplyOptions) ([]core.Action, e
 		}
 	}
 
-	return actions, errors.Join(errs...)
+	return result, errors.Join(errs...)
 }
 
 // Validate reports drift between every provider's desired resources and
