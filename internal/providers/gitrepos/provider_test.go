@@ -110,6 +110,42 @@ func TestDiscoverFindsReposInKnownContainers(t *testing.T) {
 	}
 }
 
+func TestDiscoverFindsReposInNestedPluginManagerContainers(t *testing.T) {
+	home := t.TempDir()
+
+	lazyPluginPath := filepath.Join(home, ".local/share/nvim/lazy/telescope.nvim")
+	mkGitDir(t, lazyPluginPath)
+
+	ohMyZshPluginPath := filepath.Join(home, ".oh-my-zsh/custom/plugins/zsh-autosuggestions")
+	mkGitDir(t, ohMyZshPluginPath)
+
+	fr := newFakeRunner()
+	fr.set("https://github.com/nvim-telescope/telescope.nvim.git\n", "git", "-C", lazyPluginPath, "remote", "get-url", "origin")
+	fr.set("main\n", "git", "-C", lazyPluginPath, "rev-parse", "--abbrev-ref", "HEAD")
+	fr.set("https://github.com/zsh-users/zsh-autosuggestions.git\n", "git", "-C", ohMyZshPluginPath, "remote", "get-url", "origin")
+	fr.set("master\n", "git", "-C", ohMyZshPluginPath, "rev-parse", "--abbrev-ref", "HEAD")
+
+	p := newWithRunner(home, fr.run)
+	resources, err := p.Discover(context.Background(), core.SystemContext{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(resources) != 2 {
+		t.Fatalf("got %d resources, want 2: %+v", len(resources), resources)
+	}
+
+	byID := make(map[string]core.Resource, len(resources))
+	for _, r := range resources {
+		byID[r.ID] = r
+	}
+	if _, ok := byID[filepath.Join(".local/share/nvim/lazy", "telescope.nvim")]; !ok {
+		t.Error("missing lazy.nvim plugin resource")
+	}
+	if _, ok := byID[filepath.Join(".oh-my-zsh/custom/plugins", "zsh-autosuggestions")]; !ok {
+		t.Error("missing oh-my-zsh custom plugin resource")
+	}
+}
+
 func TestExportRecordsRemoteOnly(t *testing.T) {
 	p := newWithRunner(t.TempDir(), nil)
 	resources := []core.Resource{

@@ -8,4 +8,15 @@ package gitrepos
 var KnownContainers = []string{
 	".local/share",
 	".tmux/plugins",
+	// Nested plugin-manager layouts: rather than making the scanner
+	// recursive (which would risk sweeping up arbitrary project trees),
+	// each is added as its own one-level-deep container.
+	".oh-my-zsh/custom/plugins",
+	".oh-my-zsh/custom/themes",
+	".zinit/plugins",
+	".local/share/zinit/plugins",
+	".vim/plugged",
+	".local/share/nvim/lazy",
+	".local/share/nvim/site/pack/packer/start",
+	".local/share/nvim/site/pack/packer/opt",
 }
