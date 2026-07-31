@@ -209,6 +209,7 @@ func TestDiscoverFiltersJunkWithinAppDirectory(t *testing.T) {
 	writeHomeFile(t, home, ".config/someapp/Cache/blob-data", "junk")
 	writeHomeFile(t, home, ".config/someapp/state.sqlite", "junk")
 	writeHomeFile(t, home, ".config/someapp/SingletonLock", "junk")
+	writeHomeFile(t, home, ".config/someapp/telemetry/upload.token", "junk")
 
 	p := newWithHome(home)
 	resources, err := p.Discover(context.Background(), core.SystemContext{})

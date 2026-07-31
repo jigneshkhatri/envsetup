@@ -11,6 +11,7 @@ import (
 	"github.com/jigneshkhatri/envsetup/internal/providers/packages"
 	"github.com/jigneshkhatri/envsetup/internal/providers/recipe"
 	"github.com/jigneshkhatri/envsetup/internal/providers/services"
+	"github.com/jigneshkhatri/envsetup/internal/providers/systemconfigs"
 	"github.com/jigneshkhatri/envsetup/internal/providers/themes"
 	"github.com/jigneshkhatri/envsetup/internal/registry"
 )
@@ -33,6 +34,7 @@ func main() {
 	app.Registry.Register(services.New())
 	app.Registry.Register(flatpak.New())
 	app.Registry.Register(themes.New())
+	app.Registry.Register(systemconfigs.New())
 
 	root := newRootCmd(app)
 	root.SetOut(app.Out)

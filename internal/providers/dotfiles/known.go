@@ -70,6 +70,7 @@ var excludedConfigDirNames = map[string]bool{
 	"WebStorage": true, "logs": true, "Logs": true, "Crash Reports": true,
 	"Crashpad": true, ".git": true, "node_modules": true, "__pycache__": true,
 	"globalStorage": true, "workspaceStorage": true, "History": true,
+	"telemetry": true,
 }
 
 // excludedConfigExtensions are file extensions skipped anywhere while
