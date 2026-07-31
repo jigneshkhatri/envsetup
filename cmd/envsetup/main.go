@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/jigneshkhatri/envsetup/internal/providers/dotfiles"
+	"github.com/jigneshkhatri/envsetup/internal/providers/flatpak"
 	"github.com/jigneshkhatri/envsetup/internal/providers/fonts"
 	"github.com/jigneshkhatri/envsetup/internal/providers/gitrepos"
 	"github.com/jigneshkhatri/envsetup/internal/providers/packages"
@@ -29,6 +30,7 @@ func main() {
 	app.Registry.Register(fonts.New())
 	app.Registry.Register(recipe.New(app.Out))
 	app.Registry.Register(services.New())
+	app.Registry.Register(flatpak.New())
 
 	root := newRootCmd(app)
 	root.SetOut(app.Out)
