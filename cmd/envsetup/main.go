@@ -9,6 +9,7 @@ import (
 	"github.com/jigneshkhatri/envsetup/internal/providers/gitrepos"
 	"github.com/jigneshkhatri/envsetup/internal/providers/packages"
 	"github.com/jigneshkhatri/envsetup/internal/providers/recipe"
+	"github.com/jigneshkhatri/envsetup/internal/providers/services"
 	"github.com/jigneshkhatri/envsetup/internal/registry"
 )
 
@@ -27,6 +28,7 @@ func main() {
 	app.Registry.Register(gitrepos.New())
 	app.Registry.Register(fonts.New())
 	app.Registry.Register(recipe.New(app.Out))
+	app.Registry.Register(services.New())
 
 	root := newRootCmd(app)
 	root.SetOut(app.Out)
