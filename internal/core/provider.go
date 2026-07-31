@@ -77,9 +77,12 @@ type Provider interface {
 
 	// Plan diffs desired resources (from the project) against current
 	// resources (from a fresh Discover) and returns the actions needed to
-	// reconcile them. Deliberately has no filesystem access of its own --
-	// providers diff via attributes (e.g. a content hash) computed by
-	// Discover and Export, not by re-reading files.
+	// reconcile them. Most providers diff purely via attributes (e.g. a
+	// content hash) computed by Discover and Export, without touching the
+	// filesystem themselves -- but this isn't an interface guarantee: a
+	// provider whose resource type has no other way to represent "current
+	// state" (e.g. recipes, where an idempotency check command *is* the
+	// state) may do real work here instead.
 	Plan(ctx context.Context, desired []ProjectResource, current []Resource) ([]Action, error)
 
 	// Apply executes a single action produced by Plan. projectDir is the
@@ -89,4 +92,14 @@ type Provider interface {
 	// Validate reports drift between desired resources and live system
 	// state, without modifying anything.
 	Validate(ctx context.Context, desired []ProjectResource) ([]ValidationResult, error)
+}
+
+// UserDeclaredProvider is implemented by a Provider whose resources are
+// entirely hand-authored in the project rather than found by Discover --
+// e.g. recipes, the escape hatch for anything automatic discovery can't
+// model. The engine type-asserts for this and skips such providers during
+// export, so hand-authored project entries are never overwritten by an
+// (always empty) discovered list.
+type UserDeclaredProvider interface {
+	UserDeclared() bool
 }

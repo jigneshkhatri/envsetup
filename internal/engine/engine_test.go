@@ -273,3 +273,68 @@ func TestApplyOnlyFiltersByType(t *testing.T) {
 		t.Fatalf("Apply: filtered-out action still executed: %+v", system)
 	}
 }
+
+// userDeclaredFakeProvider simulates a provider like recipe: Discover
+// always returns nothing, and it opts out of export via
+// core.UserDeclaredProvider so hand-authored project entries survive
+// `envsetup export`.
+type userDeclaredFakeProvider struct {
+	discoverCalled bool
+}
+
+func (f *userDeclaredFakeProvider) Type() string       { return "recipes" }
+func (f *userDeclaredFakeProvider) UserDeclared() bool { return true }
+
+func (f *userDeclaredFakeProvider) Discover(ctx context.Context, sys core.SystemContext) ([]core.Resource, error) {
+	f.discoverCalled = true
+	return nil, nil
+}
+
+func (f *userDeclaredFakeProvider) Export(ctx context.Context, projectDir string, resources []core.Resource) ([]core.ProjectResource, error) {
+	return nil, nil
+}
+
+func (f *userDeclaredFakeProvider) Plan(ctx context.Context, desired []core.ProjectResource, current []core.Resource) ([]core.Action, error) {
+	return nil, nil
+}
+
+func (f *userDeclaredFakeProvider) Apply(ctx context.Context, projectDir string, action core.Action) error {
+	return nil
+}
+
+func (f *userDeclaredFakeProvider) Validate(ctx context.Context, desired []core.ProjectResource) ([]core.ValidationResult, error) {
+	return nil, nil
+}
+
+func TestExportSkipsUserDeclaredProviders(t *testing.T) {
+	ctx := context.Background()
+
+	fake := &userDeclaredFakeProvider{}
+	reg := registry.New()
+	if err := reg.Register(fake); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	proj := project.New(t.TempDir(), "test-project")
+	// Simulate a hand-authored recipes.yaml entry already present in the
+	// project -- export must leave it alone.
+	proj.SetResourcesFor("recipes", []core.ProjectResource{
+		{ID: "hand-authored", Attributes: map[string]any{"apply": "true", "check": "true"}},
+	})
+
+	e := New(reg, proj, core.SystemContext{})
+
+	results, err := e.Export(ctx)
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("Export: got %d results, want 0 (user-declared provider should be skipped): %+v", len(results), results)
+	}
+	if fake.discoverCalled {
+		t.Error("Export should not call Discover on a user-declared provider")
+	}
+	if got := proj.ResourcesFor("recipes"); len(got) != 1 {
+		t.Fatalf("hand-authored recipes entry was touched: %+v", got)
+	}
+}

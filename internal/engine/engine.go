@@ -57,6 +57,10 @@ func (e *Engine) Export(ctx context.Context) ([]ExportResult, error) {
 	var results []ExportResult
 
 	for _, p := range e.Registry.All() {
+		if ud, ok := p.(core.UserDeclaredProvider); ok && ud.UserDeclared() {
+			continue
+		}
+
 		discovered, err := p.Discover(ctx, e.Sys)
 		if err != nil {
 			return nil, fmt.Errorf("engine: discovering %s: %w", p.Type(), err)

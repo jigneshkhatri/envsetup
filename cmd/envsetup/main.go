@@ -8,6 +8,7 @@ import (
 	"github.com/jigneshkhatri/envsetup/internal/providers/fonts"
 	"github.com/jigneshkhatri/envsetup/internal/providers/gitrepos"
 	"github.com/jigneshkhatri/envsetup/internal/providers/packages"
+	"github.com/jigneshkhatri/envsetup/internal/providers/recipe"
 	"github.com/jigneshkhatri/envsetup/internal/registry"
 )
 
@@ -25,6 +26,7 @@ func main() {
 	app.Registry.Register(dotfiles.New())
 	app.Registry.Register(gitrepos.New())
 	app.Registry.Register(fonts.New())
+	app.Registry.Register(recipe.New(app.Out))
 
 	root := newRootCmd(app)
 	root.SetOut(app.Out)
