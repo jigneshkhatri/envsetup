@@ -93,7 +93,7 @@ whether you're reconciling packages, dotfiles, or a systemd unit.
 | `system_configs` | `/etc` files pacman itself reports as locally modified from a package default | Discovered via `pacman -Qii`; machine-identity files (`/etc/passwd`, `/etc/fstab`, ...) are excluded |
 | `git_repos` | Git-cloned tool/plugin checkouts in known container directories | Ref pinning is opt-in |
 | `fonts` | Manually-installed fonts under `~/.local/share/fonts`, `~/.fonts` | Triggers a font-cache rebuild on apply |
-| `themes` | Manually-installed GTK/icon/cursor themes | Each theme is one resource (a whole directory tree) |
+| `themes` | Manually-installed GTK/icon/cursor/SDDM themes, user and system-wide | System-wide themes are filtered by pacman ownership; can also reproduce which SDDM theme is active |
 | `services` | Enabled systemd units, user and system scope | Enablement only — never starts/stops a live service |
 | `recipes` | Nothing — hand-authored only | The escape hatch below |
 
