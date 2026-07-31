@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/jigneshkhatri/envsetup/internal/providers/dotfiles"
+	"github.com/jigneshkhatri/envsetup/internal/providers/fonts"
 	"github.com/jigneshkhatri/envsetup/internal/providers/gitrepos"
 	"github.com/jigneshkhatri/envsetup/internal/providers/packages"
 	"github.com/jigneshkhatri/envsetup/internal/registry"
@@ -23,6 +24,7 @@ func main() {
 	app.Registry.Register(packages.New())
 	app.Registry.Register(dotfiles.New())
 	app.Registry.Register(gitrepos.New())
+	app.Registry.Register(fonts.New())
 
 	root := newRootCmd(app)
 	root.SetOut(app.Out)
