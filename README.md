@@ -88,9 +88,12 @@ whether you're reconciling packages, dotfiles, or a systemd unit.
 | Type | Discovers | Notes |
 |---|---|---|
 | `packages` | Explicitly-installed pacman and AUR packages | No version pinning by default |
-| `dotfiles` | A curated allowlist of well-known config paths under `$HOME` | Content stored byte-for-byte in the project |
+| `flatpaks` | User-scope Flatpak app installs | Always `--user` scope, never needs root |
+| `dotfiles` | A blanket scan of top-level `$HOME` dotfiles and `.config/*`, bounded by exclusion lists | Content stored byte-for-byte; each `.config/<app>` directory is one grouped resource |
+| `system_configs` | `/etc` files pacman itself reports as locally modified from a package default | Discovered via `pacman -Qii`; machine-identity files (`/etc/passwd`, `/etc/fstab`, ...) are excluded |
 | `git_repos` | Git-cloned tool/plugin checkouts in known container directories | Ref pinning is opt-in |
 | `fonts` | Manually-installed fonts under `~/.local/share/fonts`, `~/.fonts` | Triggers a font-cache rebuild on apply |
+| `themes` | Manually-installed GTK/icon/cursor themes | Each theme is one resource (a whole directory tree) |
 | `services` | Enabled systemd units, user and system scope | Enablement only — never starts/stops a live service |
 | `recipes` | Nothing — hand-authored only | The escape hatch below |
 
