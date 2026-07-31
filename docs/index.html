@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>EnvSetup — Reproduce a Linux workstation from its exported state</title>
+<meta name="description" content="EnvSetup captures the complete state of a Linux workstation into a plain-text project, and recreates it on another machine safely, predictably, and repeatedly." />
+<link rel="icon" href="data:," />
+<style>
+  /* ---------- tokens ---------- */
+  :root {
+    --bg: #12140f;
+    --surface: #191c14;
+    --surface-2: #1f2318;
+    --border: #2b2e22;
+    --fg: #eae7db;
+    --muted: #9b9788;
+    --faint: #6d6a58;
+    --accent: #5fd068;
+    --accent-fg: #0c1408;
+    --warn: #e8b339;
+    --danger: #e2604a;
+
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+
+    --maxw: 780px;
+    --radius: 7px;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f7f4ea;
+      --surface: #efeadb;
+      --surface-2: #e7e1cd;
+      --border: #ddd6c0;
+      --fg: #1c1d15;
+      --muted: #6d6a58;
+      --faint: #918c76;
+      --accent: #2f8f4e;
+      --accent-fg: #f7f4ea;
+      --warn: #9c6b0a;
+      --danger: #b93a26;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #12140f; --surface: #191c14; --surface-2: #1f2318; --border: #2b2e22;
+    --fg: #eae7db; --muted: #9b9788; --faint: #6d6a58;
+    --accent: #5fd068; --accent-fg: #0c1408; --warn: #e8b339; --danger: #e2604a;
+  }
+  :root[data-theme="light"] {
+    --bg: #f7f4ea; --surface: #efeadb; --surface-2: #e7e1cd; --border: #ddd6c0;
+    --fg: #1c1d15; --muted: #6d6a58; --faint: #918c76;
+    --accent: #2f8f4e; --accent-fg: #f7f4ea; --warn: #9c6b0a; --danger: #b93a26;
+  }
+
+  /* ---------- reset ---------- */
+  * { box-sizing: border-box; }
+  html { color-scheme: light dark; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    transition: background-color .15s ease, color .15s ease;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+  h1, h2, h3 { font-family: var(--mono); font-weight: 700; text-wrap: balance; margin: 0; }
+  code, pre { font-family: var(--mono); }
+  ::selection { background: var(--accent); color: var(--accent-fg); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  }
+
+  /* ---------- layout shell ---------- */
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+  .wrap-wide { max-width: 900px; margin: 0 auto; padding: 0 24px; }
+
+  header.site {
+    position: sticky; top: 0; z-index: 10;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--border);
+  }
+  .site-bar {
+    max-width: 900px; margin: 0 auto; padding: 14px 24px;
+    display: flex; align-items: center; justify-content: space-between;
+    font-family: var(--mono); font-size: 14px;
+  }
+  .brand { display: flex; align-items: baseline; gap: 8px; color: var(--fg); }
+  .brand:hover { text-decoration: none; }
+  .brand .prompt { color: var(--accent); }
+  .brand b { font-weight: 700; letter-spacing: -0.02em; }
+  .nav-links { display: flex; align-items: center; gap: 20px; }
+  .nav-links a { color: var(--muted); }
+  .nav-links a:hover { color: var(--fg); }
+
+  .theme-toggle {
+    font-family: var(--mono); font-size: 12px; color: var(--muted);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 5px;
+    padding: 5px 9px; cursor: pointer;
+  }
+  .theme-toggle:hover { color: var(--fg); border-color: var(--faint); }
+
+  /* ---------- hero ---------- */
+  .hero { padding: 64px 0 24px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 13px; color: var(--muted);
+    display: flex; align-items: center; gap: 8px; margin-bottom: 18px;
+  }
+  .eyebrow .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
+
+  .hero h1 {
+    font-size: clamp(1.9rem, 4.6vw, 3rem);
+    line-height: 1.12;
+    letter-spacing: -0.015em;
+  }
+  .hero h1 .accent { color: var(--accent); }
+
+  .hero p.lede {
+    font-family: var(--sans); font-size: 1.0625rem; line-height: 1.65;
+    color: var(--muted); max-width: 62ch; margin: 20px 0 0;
+  }
+
+  .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+  .btn {
+    font-family: var(--mono); font-size: 14px; font-weight: 700;
+    padding: 11px 18px; border-radius: var(--radius); border: 1px solid transparent;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .btn:hover { text-decoration: none; }
+  .btn-primary { background: var(--accent); color: var(--accent-fg); }
+  .btn-primary:hover { filter: brightness(1.08); }
+  .btn-ghost { background: transparent; color: var(--fg); border-color: var(--border); }
+  .btn-ghost:hover { border-color: var(--faint); }
+
+  /* ---------- terminal window ---------- */
+  .term {
+    margin-top: 44px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: 0 20px 50px -25px rgba(0,0,0,.5);
+  }
+  .term-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+  }
+  .term-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--border); }
+  .term-title {
+    margin-left: 6px; font-family: var(--mono); font-size: 12px; color: var(--faint);
+  }
+  .term-body {
+    padding: 20px 22px 24px;
+    font-family: var(--mono); font-size: 13.5px; line-height: 1.75;
+    overflow-x: auto;
+    white-space: pre;
+  }
+  .term-body .line {
+    opacity: 0;
+    animation: rise .4s ease forwards;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .term-body .line { opacity: 1; animation: none; }
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(3px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .prompt-line { color: var(--muted); }
+  .prompt-line .p { color: var(--accent); }
+  .g { color: var(--accent); }
+  .y { color: var(--warn); }
+  .r { color: var(--danger); }
+  .dim { color: var(--faint); }
+  .cursor {
+    display: inline-block; width: 8px; height: 1.1em; background: var(--accent);
+    vertical-align: text-bottom; margin-left: 2px;
+    animation: blink 1s step-end infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .cursor { animation: none; } }
+
+  /* ---------- sections ---------- */
+  section { padding: 56px 0; border-top: 1px solid var(--border); }
+  .section-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 28px; }
+  .section-head .tag { font-family: var(--mono); color: var(--accent); font-size: 14px; }
+  section h2 {
+    font-size: 1.05rem; letter-spacing: .02em; text-transform: lowercase;
+    color: var(--fg);
+  }
+  section > .wrap > p.intro, section > .wrap-wide > p.intro {
+    font-family: var(--sans); color: var(--muted); font-size: 1.0625rem; line-height: 1.65;
+    max-width: 62ch; margin: -10px 0 28px;
+  }
+
+  /* philosophy */
+  .principles { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .principle { background: var(--surface); padding: 20px 20px 22px; }
+  .principle .comment { font-family: var(--mono); font-size: 13px; color: var(--accent); margin-bottom: 8px; }
+  .principle p { font-family: var(--sans); font-size: .9375rem; color: var(--muted); margin: 0; line-height: 1.55; }
+
+  /* resource table */
+  .restable-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+  table.restable { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 13.5px; }
+  table.restable th {
+    text-align: left; font-weight: 700; color: var(--faint); text-transform: uppercase;
+    font-size: 11px; letter-spacing: .06em; padding: 12px 16px; background: var(--surface-2);
+    border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  table.restable td { padding: 12px 16px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  table.restable tr:last-child td { border-bottom: none; }
+  table.restable td.type { color: var(--accent); font-weight: 700; white-space: nowrap; }
+  table.restable td.note { color: var(--muted); font-size: 13px; }
+
+  /* safety */
+  .safety-grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 32px; align-items: start; }
+  @media (max-width: 760px) { .safety-grid { grid-template-columns: 1fr; } }
+  .safety-grid p { font-family: var(--sans); color: var(--muted); font-size: 1rem; line-height: 1.65; margin: 0 0 14px; }
+  .flags { list-style: none; margin: 18px 0 0; padding: 0; font-family: var(--mono); font-size: 13.5px; }
+  .flags li { padding: 8px 0; border-top: 1px solid var(--border); display: flex; gap: 10px; }
+  .flags li:first-child { border-top: none; }
+  .flags code { color: var(--fg); }
+  .flags span { color: var(--muted); font-family: var(--sans); font-size: .875rem; }
+
+  /* quickstart */
+  .steps { display: grid; gap: 14px; }
+  .step { display: grid; grid-template-columns: auto 1fr; gap: 16px; align-items: start; }
+  .step .n { font-family: var(--mono); color: var(--faint); font-size: 13px; padding-top: 12px; }
+  .step .cmdbox {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 12px 16px; font-family: var(--mono); font-size: 13.5px; overflow-x: auto; white-space: pre;
+  }
+  .step .cmdbox .p { color: var(--accent); }
+  .step .why { font-family: var(--sans); color: var(--muted); font-size: .875rem; margin: 6px 2px 0; }
+
+  /* footer */
+  footer { border-top: 1px solid var(--border); padding: 40px 0 56px; }
+  .footer-row {
+    display: flex; flex-wrap: wrap; justify-content: space-between; gap: 20px;
+    font-family: var(--mono); font-size: 13px; color: var(--faint);
+  }
+  .footer-links { display: flex; gap: 18px; flex-wrap: wrap; }
+  .footer-links a { color: var(--muted); }
+  .footer-links a:hover { color: var(--fg); }
+  .footer-tag { color: var(--faint); }
+
+  @media (max-width: 600px) {
+    .hero { padding: 44px 0 12px; }
+    .term-body { padding: 16px 14px 18px; font-size: 12.5px; }
+    section { padding: 40px 0; }
+  }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="site-bar">
+    <a class="brand" href="#top">
+      <span class="prompt">~$</span><b>envsetup</b>
+    </a>
+    <nav class="nav-links">
+      <a href="#tracked">tracked</a>
+      <a href="#safety">safety</a>
+      <a href="#quickstart">quickstart</a>
+      <a href="https://github.com/jigneshkhatri/envsetup">github</a>
+      <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme">theme</button>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <div class="wrap">
+    <section class="hero" style="border-top: none; padding-top: 64px;">
+      <p class="eyebrow"><span class="dot"></span>open source · MIT licensed · Arch Linux</p>
+      <h1>Reproduce a Linux workstation<br />from its <span class="accent">exported state.</span></h1>
+      <p class="lede">
+        EnvSetup captures the complete state of a workstation — packages, dotfiles,
+        cloned repos, fonts, systemd services, and anything you declare by hand —
+        into a plain-text, git-friendly project. Point it at another machine and it
+        gets you back to that state: safely, predictably, and repeatedly.
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/jigneshkhatri/envsetup">View on GitHub</a>
+        <a class="btn btn-ghost" href="#quickstart">Read the quickstart</a>
+      </div>
+
+      <div class="term">
+        <div class="term-bar">
+          <div class="term-dot"></div><div class="term-dot"></div><div class="term-dot"></div>
+          <span class="term-title">~/dotfiles</span>
+        </div>
+        <div class="term-body" id="termBody">
+          <div class="line prompt-line" style="animation-delay:.05s"><span class="p">~/dotfiles $</span> envsetup plan</div>
+          <div class="line g" style="animation-delay:.15s">  + packages.neovim: install neovim (pacman)</div>
+          <div class="line g" style="animation-delay:.25s">  + flatpaks.org.gimp.GIMP: install org.gimp.GIMP (flathub)</div>
+          <div class="line y" style="animation-delay:.35s">  ~ dotfiles..zshrc: update .zshrc (content differs)</div>
+          <div class="line y" style="animation-delay:.45s">  ~ system_configs./etc/nginx/nginx.conf: update /etc/nginx/nginx.conf (content differs)</div>
+          <div class="line r" style="animation-delay:.55s">  - packages.cowsay: remove cowsay</div>
+          <div class="line dim" style="animation-delay:.68s">&nbsp;</div>
+          <div class="line dim" style="animation-delay:.72s">Plan: 2 to create, 2 to update, 1 to delete.</div>
+          <div class="line dim" style="animation-delay:.85s">&nbsp;</div>
+          <div class="line prompt-line" style="animation-delay:.95s"><span class="p">~/dotfiles $</span> <span class="cursor"></span></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <section id="philosophy">
+    <div class="wrap">
+      <div class="section-head"><span class="tag">#</span><h2>philosophy</h2></div>
+      <p class="intro">
+        Rebuilding a workstation by hand means retracing dozens of steps that were
+        never written down. EnvSetup exists to make that reproducible instead —
+        and it stays disciplined about how.
+      </p>
+      <div class="principles">
+        <div class="principle">
+          <div class="comment"># human-readable over proprietary</div>
+          <p>Everything is YAML. Tracked file content sits byte-for-byte in the project, not a binary blob.</p>
+        </div>
+        <div class="principle">
+          <div class="comment"># state-driven over command-driven</div>
+          <p>You declare what should exist. EnvSetup works out how to reconcile the difference.</p>
+        </div>
+        <div class="principle">
+          <div class="comment"># safe over clever</div>
+          <p>By default, apply only fills in what's missing — it never overrides or removes anything on its own.</p>
+        </div>
+        <div class="principle">
+          <div class="comment"># correct over automatic</div>
+          <p>Discovery never guesses. Anything EnvSetup isn't confident about gets flagged for review, not silently included.</p>
+        </div>
+        <div class="principle">
+          <div class="comment"># small core, extensible ecosystem</div>
+          <p>The engine has no idea what a package or a dotfile is — that knowledge lives entirely in pluggable providers.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tracked">
+    <div class="wrap-wide">
+      <div class="section-head"><span class="tag">$</span><h2>envsetup scan</h2></div>
+      <p class="intro">One provider per resource type, each teaching the engine how to discover, export, plan, apply, and validate its own corner of the system.</p>
+      <div class="restable-wrap">
+        <table class="restable">
+          <thead>
+            <tr><th>type</th><th>discovers</th><th>note</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="type">packages</td><td>Explicitly-installed pacman and AUR packages</td><td class="note">No version pinning by default</td></tr>
+            <tr><td class="type">flatpaks</td><td>User-scope Flatpak app installs</td><td class="note">Always --user, never needs root</td></tr>
+            <tr><td class="type">dotfiles</td><td>$HOME dotfiles and .config/*, blanket-scanned</td><td class="note">Bounded by exclusion lists, not an allowlist</td></tr>
+            <tr><td class="type">system_configs</td><td>/etc files pacman reports as locally modified</td><td class="note">Machine-identity files excluded</td></tr>
+            <tr><td class="type">git_repos</td><td>Git-cloned tool and plugin checkouts</td><td class="note">Ref pinning is opt-in</td></tr>
+            <tr><td class="type">fonts</td><td>Manually-installed fonts</td><td class="note">Rebuilds the font cache on apply</td></tr>
+            <tr><td class="type">themes</td><td>Manually-installed GTK, icon, cursor themes</td><td class="note">One resource per theme directory</td></tr>
+            <tr><td class="type">services</td><td>Enabled systemd units, user and system</td><td class="note">Enablement only, never starts a unit</td></tr>
+            <tr><td class="type">recipes</td><td>Nothing — hand-authored only</td><td class="note">The escape hatch for everything else</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="safety">
+    <div class="wrap-wide">
+      <div class="section-head"><span class="tag">!</span><h2>safety model</h2></div>
+      <div class="safety-grid">
+        <div>
+          <p>
+            By default, <code>apply</code> only executes <b style="color:var(--fg)">create</b> actions —
+            resources that are declared but missing. It still computes and shows
+            update and delete actions in the plan, but skips running them.
+          </p>
+          <p>
+            Nothing overrides or removes configuration already on your machine
+            unless you explicitly say so, every time.
+          </p>
+          <ul class="flags">
+            <li><code>--allow-update</code><span>let it overwrite drifted resources</span></li>
+            <li><code>--allow-remove</code><span>let it remove undeclared resources</span></li>
+            <li><code>--dry-run</code><span>show the plan without applying it</span></li>
+          </ul>
+        </div>
+        <div class="term" style="margin-top:0;">
+          <div class="term-bar">
+            <div class="term-dot"></div><div class="term-dot"></div><div class="term-dot"></div>
+            <span class="term-title">apply</span>
+          </div>
+          <div class="term-body" style="font-size:12.5px;">
+<span class="prompt-line"><span class="p">$</span> envsetup apply</span>
+<span class="g">  + packages.neovim: install neovim (pacman)</span>
+<span class="r">  - packages.cowsay: remove cowsay</span>
+
+Plan: 1 to create, 0 to update, 1 to delete.
+
+<span class="dim">1 action(s) skipped by default.</span>
+<span class="dim">Apply these 1 action(s)? [y/N]</span> y
+
+Applied 1 action(s).</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="quickstart">
+    <div class="wrap">
+      <div class="section-head"><span class="tag">$</span><h2>quickstart</h2></div>
+      <div class="steps">
+        <div class="step">
+          <div class="n">01</div>
+          <div>
+            <div class="cmdbox"><span class="p">$</span> envsetup scan</div>
+            <p class="why">See what EnvSetup finds on this machine. Read-only, changes nothing.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">02</div>
+          <div>
+            <div class="cmdbox"><span class="p">$</span> envsetup init ~/dotfiles
+<span class="p">$</span> envsetup export ~/dotfiles</div>
+            <p class="why">Create a project and populate it from what scan found. It's now a plain directory — put it under git.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">03</div>
+          <div>
+            <div class="cmdbox"><span class="p">$</span> envsetup plan
+<span class="p">$</span> envsetup apply</div>
+            <p class="why">On another machine: see exactly what would change, then bring it in line with the project.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="n">04</div>
+          <div>
+            <div class="cmdbox"><span class="p">$</span> envsetup validate
+<span class="p">$</span> envsetup doctor</div>
+            <p class="why">Check for drift later on, and diagnose common problems — broken symlinks, dead remotes, unavailable packages.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="section-head"><span class="tag">#</span><h2>install</h2></div>
+      <div class="cmdbox" style="background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:16px 18px; font-family:var(--mono); font-size:13.5px; overflow-x:auto; white-space:pre;"><span class="p">$</span> git clone https://github.com/jigneshkhatri/envsetup.git
+<span class="p">$</span> cd envsetup
+<span class="p">$</span> go build -o envsetup ./cmd/envsetup
+<span class="p">$</span> sudo mv envsetup /usr/local/bin/</div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="footer-row">
+      <span class="footer-tag">envsetup — Arch Linux / pacman only, for now.</span>
+      <div class="footer-links">
+        <a href="https://github.com/jigneshkhatri/envsetup">GitHub</a>
+        <a href="https://github.com/jigneshkhatri/envsetup/blob/main/CONTRIBUTING.md">Contributing</a>
+        <a href="https://github.com/jigneshkhatri/envsetup/blob/main/LICENSE">MIT License</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    var key = "envsetup-theme";
+    var toggle = document.getElementById("themeToggle");
+
+    function apply(theme) {
+      if (theme) { root.setAttribute("data-theme", theme); }
+      else { root.removeAttribute("data-theme"); }
+    }
+
+    var saved = null;
+    try { saved = localStorage.getItem(key); } catch (e) {}
+    if (saved) apply(saved);
+
+    toggle.addEventListener("click", function () {
+      var current = root.getAttribute("data-theme");
+      var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      var currentlyDark = current ? current === "dark" : prefersDark;
+      var next = currentlyDark ? "light" : "dark";
+      apply(next);
+      try { localStorage.setItem(key, next); } catch (e) {}
+    });
+  })();
+</script>
+</body>
+</html>
