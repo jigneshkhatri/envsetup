@@ -2,6 +2,7 @@ package systemconfigs
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,6 +110,103 @@ Extended Data   : pkgtype=pkg
 	}
 	if resources[0].Confidence != core.ConfidenceHigh {
 		t.Errorf("confidence = %v, want high", resources[0].Confidence)
+	}
+}
+
+// emptyQiiFixture is `pacman -Qii` output for a system with nothing
+// modified -- used by the drop-in-dir tests below, which only care about
+// the second Discover pass.
+const emptyQiiFixture = `Name            : base
+Backup Files    : None
+Extended Data   : pkgtype=pkg
+`
+
+func TestDiscoverIncludesUnownedDropInFiles(t *testing.T) {
+	root := t.TempDir()
+	dropDir := filepath.Join(root, "etc", "sddm.conf.d")
+	if err := os.MkdirAll(dropDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dropDir, "custom.conf"), []byte("[Theme]\nCurrent=manual-theme\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	// A directory entry sitting alongside the file must be skipped -- only
+	// regular files are candidates (see the comment in Discover).
+	if err := os.MkdirAll(filepath.Join(dropDir, "not-a-file.d"), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	run := func(ctx context.Context, name string, args ...string) (string, error) {
+		if args[0] == "-Qii" {
+			return emptyQiiFixture, nil
+		}
+		// -Qo: nothing is package-owned in this fixture.
+		return "", errors.New("No package owns " + args[1])
+	}
+
+	p := newWithRoot(run, root)
+	resources, err := p.Discover(context.Background(), core.SystemContext{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(resources) != 1 {
+		t.Fatalf("got %d resources, want 1: %+v", len(resources), resources)
+	}
+
+	want := "/etc/sddm.conf.d/custom.conf"
+	if resources[0].ID != want {
+		t.Errorf("ID = %q, want %q", resources[0].ID, want)
+	}
+	if resources[0].Confidence != core.ConfidenceHigh {
+		t.Errorf("confidence = %v, want high", resources[0].Confidence)
+	}
+	if resources[0].Provenance.Source != "local-file" {
+		t.Errorf("provenance source = %q, want local-file", resources[0].Provenance.Source)
+	}
+}
+
+func TestDiscoverExcludesPackageOwnedDropInFiles(t *testing.T) {
+	root := t.TempDir()
+	dropDir := filepath.Join(root, "etc", "sddm.conf.d")
+	if err := os.MkdirAll(dropDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dropDir, "shipped-by-package.conf"), []byte("[Theme]\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	run := func(ctx context.Context, name string, args ...string) (string, error) {
+		if args[0] == "-Qii" {
+			return emptyQiiFixture, nil
+		}
+		return "sddm 0.20.0-1", nil // -Qo succeeds: owned
+	}
+
+	p := newWithRoot(run, root)
+	resources, err := p.Discover(context.Background(), core.SystemContext{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(resources) != 0 {
+		t.Fatalf("got %+v, want no resources (file is package-owned)", resources)
+	}
+}
+
+func TestDiscoverDropInDirMissingIsNotAnError(t *testing.T) {
+	run := func(ctx context.Context, name string, args ...string) (string, error) {
+		return emptyQiiFixture, nil
+	}
+
+	// newWithRunner points systemRoot at a path that doesn't exist, so
+	// every KnownDropInDirs lookup fails with "not exist" -- Discover must
+	// treat that as "nothing here", not propagate an error.
+	p := newWithRunner(run)
+	resources, err := p.Discover(context.Background(), core.SystemContext{})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(resources) != 0 {
+		t.Fatalf("got %+v, want no resources", resources)
 	}
 }
 

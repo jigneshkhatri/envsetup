@@ -90,7 +90,7 @@ whether you're reconciling packages, dotfiles, or a systemd unit.
 | `packages` | Explicitly-installed pacman and AUR packages | No version pinning by default |
 | `flatpaks` | User-scope Flatpak app installs | Always `--user` scope, never needs root |
 | `dotfiles` | A blanket scan of top-level `$HOME` dotfiles and `.config/*`, bounded by exclusion lists | Content stored byte-for-byte; each `.config/<app>` directory is one grouped resource |
-| `system_configs` | `/etc` files pacman itself reports as locally modified from a package default | Discovered via `pacman -Qii`; machine-identity files (`/etc/passwd`, `/etc/fstab`, ...) are excluded |
+| `system_configs` | `/etc` files pacman reports as locally modified, plus hand-placed files in known drop-in directories (`/etc/sddm.conf.d`, `/etc/sysctl.d`, `/etc/udev/rules.d`, ...) | Modified files via `pacman -Qii`; drop-in files filtered by pacman ownership; machine-identity files (`/etc/passwd`, `/etc/fstab`, ...) are excluded |
 | `git_repos` | Git-cloned tool/plugin checkouts in known container directories | Ref pinning is opt-in |
 | `fonts` | Manually-installed fonts under `~/.local/share/fonts`, `~/.fonts` | Triggers a font-cache rebuild on apply |
 | `themes` | Manually-installed GTK/icon/cursor/SDDM themes, user and system-wide | System-wide themes are filtered by pacman ownership; can also reproduce which SDDM theme is active |

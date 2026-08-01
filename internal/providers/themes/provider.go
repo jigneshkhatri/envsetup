@@ -32,6 +32,7 @@ import (
 	"strings"
 
 	"github.com/jigneshkhatri/envsetup/internal/core"
+	"github.com/jigneshkhatri/envsetup/internal/pacman"
 	"github.com/jigneshkhatri/envsetup/internal/project"
 )
 
@@ -113,11 +114,7 @@ func (p *Provider) Discover(ctx context.Context, sys core.SystemContext) ([]core
 		}
 
 		for _, r := range found {
-			owned, err := p.pacmanOwns(ctx, r.ID)
-			if err != nil {
-				return nil, fmt.Errorf("themes: checking ownership of %s: %w", r.ID, err)
-			}
-			if owned {
+			if pacman.Owns(ctx, p.run, r.ID) {
 				continue // already reproducible via the packages provider
 			}
 
@@ -382,14 +379,6 @@ func (p *Provider) Validate(ctx context.Context, desired []core.ProjectResource)
 	}
 
 	return results, nil
-}
-
-// pacmanOwns reports whether path is owned by an installed package.
-// `pacman -Qo` exits non-zero with "No package owns <path>" when nothing
-// does -- that failure is the signal itself, not an error condition.
-func (p *Provider) pacmanOwns(ctx context.Context, path string) (bool, error) {
-	_, err := p.run(ctx, "pacman", "-Qo", path)
-	return err == nil, nil
 }
 
 // activeSDDMTheme returns the currently configured SDDM theme name, or ""

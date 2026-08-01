@@ -1,16 +1,20 @@
 // Package systemconfigs implements the "system_configs" resource type:
-// system-wide (/etc) configuration files that pacman itself reports as
-// locally modified from a package's shipped default -- e.g. a customized
-// /etc/nginx/nginx.conf. Discovery is authoritative package metadata, not
-// a heuristic: pacman is the one saying "this file shipped with a package
-// and the user has since changed it."
+// system-wide (/etc) configuration files that were customized after
+// install. Two independent signals feed Discover:
 //
-// This only catches modified package defaults. A brand-new file added
-// under a package's config directory (e.g. a new /etc/nginx/conf.d/
-// mysite.conf that didn't ship with any package) isn't in pacman's
-// backup-file list at all, so it isn't discovered -- closing that gap
-// would need a curated list of known /etc config directories to scan for
-// new files, which is deliberately out of scope here.
+//   - Files pacman itself reports as locally modified from a package's
+//     shipped default (e.g. a customized /etc/nginx/nginx.conf) -- read via
+//     `pacman -Qii`, authoritative package metadata, not a heuristic.
+//   - Files placed by hand inside a known "drop-in" directory (known.go's
+//     KnownDropInDirs) -- a package can expect a directory like
+//     /etc/sddm.conf.d to exist without ever shipping a file inside it, so
+//     anything found there is by definition never in pacman's backup-file
+//     list. Filtered to pacman-unowned files only, via the same ownership
+//     check the themes provider uses for system-wide theme directories.
+//
+// Together these still only cover known locations, not a blanket /etc
+// walk: most of /etc is machine-generated state (see ExcludedPaths) that
+// would be actively harmful to reproduce on another machine.
 package systemconfigs
 
 import (
@@ -23,33 +27,56 @@ import (
 	"strings"
 
 	"github.com/jigneshkhatri/envsetup/internal/core"
+	"github.com/jigneshkhatri/envsetup/internal/pacman"
 	"github.com/jigneshkhatri/envsetup/internal/project"
 )
 
 // Provider discovers and reconciles pacman-tracked, locally-modified
-// system configuration files under /etc.
+// system configuration files under /etc, plus hand-placed files in known
+// drop-in directories.
 type Provider struct {
-	run commandRunner
+	run        commandRunner
+	systemRoot string
 }
 
-// New returns a Provider that shells out to the real pacman/sudo binaries.
+// New returns a Provider that shells out to the real pacman/sudo binaries
+// and scans the real filesystem root.
 func New() *Provider {
-	return &Provider{run: execCommand}
+	return &Provider{run: execCommand, systemRoot: "/"}
 }
 
-// newWithRunner is used by tests to inject fixture pacman output.
+// newWithRunner is used by tests that only exercise the pacman-backup-file
+// path, which never touches KnownDropInDirs. systemRoot is pointed at a
+// guaranteed-nonexistent path so the drop-in scan silently finds nothing,
+// rather than reading the real host filesystem.
 func newWithRunner(run commandRunner) *Provider {
-	return &Provider{run: run}
+	return &Provider{run: run, systemRoot: "/nonexistent-envsetup-test-root"}
+}
+
+// newWithRoot is used by tests that exercise the drop-in directory scan:
+// systemRoot stands in for "/", so KnownDropInDirs entries resolve under a
+// throwaway test directory instead of the real /etc.
+func newWithRoot(run commandRunner, systemRoot string) *Provider {
+	return &Provider{run: run, systemRoot: systemRoot}
+}
+
+// systemPath resolves an absolute system path (e.g. "/etc/sddm.conf.d")
+// against systemRoot -- an identity mapping in production (systemRoot is
+// "/"), a test-directory redirect otherwise.
+func (p *Provider) systemPath(abs string) string {
+	return filepath.Join(p.systemRoot, strings.TrimPrefix(abs, "/"))
 }
 
 func (p *Provider) Type() string { return "system_configs" }
 
-// Discover runs `pacman -Qii` across every installed package and parses
-// each one's "Backup Files" section, reporting only entries pacman marks
+// Discover combines two passes. First, `pacman -Qii` across every
+// installed package, reporting only "Backup Files" entries pacman marks
 // [modified] -- and not on ExcludedPaths (known.go). A path pacman itself
 // can't read (state "[unreadable]", e.g. /etc/shadow when not running as
 // root) is skipped the same way: EnvSetup deliberately never runs as root
 // itself, so anything requiring root just to read is out of reach here.
+// Second, each of KnownDropInDirs (known.go) for hand-placed files no
+// package ever shipped -- see the package doc comment.
 func (p *Provider) Discover(ctx context.Context, sys core.SystemContext) ([]core.Resource, error) {
 	out, err := p.run(ctx, "pacman", "-Qii")
 	if err != nil {
@@ -74,6 +101,37 @@ func (p *Provider) Discover(ctx context.Context, sys core.SystemContext) ([]core
 			Provenance: core.Provenance{Source: "pacman", Origin: bf.pkg},
 			Confidence: core.ConfidenceHigh,
 		})
+	}
+
+	for _, dir := range KnownDropInDirs {
+		entries, err := os.ReadDir(p.systemPath(dir))
+		if err != nil {
+			continue // directory doesn't exist on this machine -- fine
+		}
+
+		for _, entry := range entries {
+			if !entry.Type().IsRegular() {
+				continue // skip subdirectories (e.g. per-unit foo.service.d) and symlinks (e.g. systemctl's *.wants entries)
+			}
+
+			id := filepath.Join(dir, entry.Name())
+			if ExcludedPaths[id] || pacman.Owns(ctx, p.run, id) {
+				continue // package-owned -- already reproducible via the packages provider
+			}
+
+			content, err := os.ReadFile(p.systemPath(id))
+			if err != nil {
+				continue // e.g. permission denied without root -- skip rather than fail the scan
+			}
+
+			resources = append(resources, core.Resource{
+				Type:       p.Type(),
+				ID:         id,
+				Attributes: map[string]any{"content_hash": hashContent(content)},
+				Provenance: core.Provenance{Source: "local-file", Origin: dir},
+				Confidence: core.ConfidenceHigh,
+			})
+		}
 	}
 
 	return resources, nil

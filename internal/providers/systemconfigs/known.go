@@ -28,3 +28,34 @@ var ExcludedPaths = map[string]bool{
 	"/etc/adjtime":     true,
 	"/etc/localtime":   true,
 }
+
+// KnownDropInDirs are well-known "drop-in" directories: places a package
+// expects to exist but never ships files inside itself (e.g. sddm ships
+// /etc/sddm.conf but not /etc/sddm.conf.d or anything in it), so any file
+// found there was placed by hand and is invisible to pacman's backup-file
+// tracking -- pacman only tracks files it installed, and nothing installs
+// the drop-in file itself. Discover lists each directory's immediate
+// regular files (one level, no recursion -- that's how every one of these
+// is actually used) and keeps only the ones pacman doesn't own; a
+// package-owned file here is already reproducible through the packages
+// provider.
+var KnownDropInDirs = []string{
+	"/etc/sddm.conf.d",
+	"/etc/systemd/system",
+	"/etc/systemd/logind.conf.d",
+	"/etc/systemd/journald.conf.d",
+	"/etc/systemd/resolved.conf.d",
+	"/etc/systemd/timesyncd.conf.d",
+	"/etc/systemd/system.conf.d",
+	"/etc/systemd/user.conf.d",
+	"/etc/sysctl.d",
+	"/etc/modules-load.d",
+	"/etc/modprobe.d",
+	"/etc/tmpfiles.d",
+	"/etc/udev/rules.d",
+	"/etc/X11/xorg.conf.d",
+	"/etc/NetworkManager/conf.d",
+	"/etc/NetworkManager/dispatcher.d",
+	"/etc/pacman.d/hooks",
+	"/etc/polkit-1/rules.d",
+}
