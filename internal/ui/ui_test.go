@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 
@@ -48,6 +49,33 @@ func TestPrintScanVerboseShowsAttributes(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "widget-a.value: v1") {
 		t.Errorf("verbose scan output missing attribute detail: %s", buf.String())
+	}
+}
+
+func TestPrintApplyStart(t *testing.T) {
+	var buf bytes.Buffer
+	PrintApplyStart(&buf, core.Action{ResourceType: "widget", ResourceID: "widget-a", Description: "install widget-a"})
+
+	out := buf.String()
+	if !strings.Contains(out, "widget.widget-a") || !strings.Contains(out, "install widget-a") {
+		t.Errorf("got %q", out)
+	}
+}
+
+func TestPrintApplyResult(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+
+	var buf bytes.Buffer
+	PrintApplyResult(&buf, core.Action{ResourceType: "widget", ResourceID: "widget-a"}, nil)
+	if buf.String() != "" {
+		t.Errorf("success should print nothing, got %q", buf.String())
+	}
+
+	buf.Reset()
+	PrintApplyResult(&buf, core.Action{ResourceType: "widget", ResourceID: "widget-a"}, errors.New("boom"))
+	out := buf.String()
+	if !strings.Contains(out, "widget.widget-a") || !strings.Contains(out, "failed") || !strings.Contains(out, "boom") {
+		t.Errorf("got %q", out)
 	}
 }
 

@@ -31,7 +31,17 @@ func newApplyCmd(app *App) *cobra.Command {
 			}
 
 			e := engine.New(app.Registry, proj, systemContext())
-			opts := engine.ApplyOptions{Only: only, AllowUpdate: allowUpdate, AllowRemove: allowRemove}
+			succeeded := 0
+			opts := engine.ApplyOptions{
+				Only: only, AllowUpdate: allowUpdate, AllowRemove: allowRemove,
+				OnActionStart: func(a core.Action) { ui.PrintApplyStart(app.Out, a) },
+				OnActionDone: func(a core.Action, err error) {
+					ui.PrintApplyResult(app.Out, a, err)
+					if err == nil {
+						succeeded++
+					}
+				},
+			}
 
 			// Apply always re-diffs before doing anything -- there is no
 			// path to mutate the system without a fresh plan.
@@ -68,7 +78,11 @@ func newApplyCmd(app *App) *cobra.Command {
 			}
 
 			result, applyErr := e.Apply(context.Background(), opts)
-			fmt.Fprintf(app.Out, "\nApplied %d action(s).\n", len(result.Applied))
+			if applyErr != nil {
+				fmt.Fprintf(app.Out, "\n%d of %d action(s) applied successfully.\n", succeeded, len(result.Applied))
+			} else {
+				fmt.Fprintf(app.Out, "\nApplied %d action(s).\n", len(result.Applied))
+			}
 			return applyErr
 		},
 	}

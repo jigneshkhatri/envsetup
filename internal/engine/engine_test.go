@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/jigneshkhatri/envsetup/internal/core"
@@ -13,7 +14,8 @@ import (
 // the engine's control flow end to end. It is never registered outside
 // tests and ships with no real discovery/apply logic of its own.
 type fakeProvider struct {
-	system map[string]string // id -> value, simulates live system state
+	system  map[string]string // id -> value, simulates live system state
+	failIDs map[string]bool   // resource IDs whose Apply should return an error
 }
 
 func newFakeProvider(system map[string]string) *fakeProvider {
@@ -82,6 +84,9 @@ func (f *fakeProvider) Plan(ctx context.Context, desired []core.ProjectResource,
 }
 
 func (f *fakeProvider) Apply(ctx context.Context, projectDir string, action core.Action) error {
+	if f.failIDs[action.ResourceID] {
+		return errors.New("simulated failure")
+	}
 	switch action.Kind {
 	case core.ActionCreate, core.ActionUpdate:
 		value, _ := action.Attributes["value"].(string)
@@ -392,6 +397,78 @@ func TestApplyDefaultOnlyRunsCreateActions(t *testing.T) {
 	}
 	if system["widget-c"] != "v1" {
 		t.Errorf("widget-c create did not run: %+v", system)
+	}
+}
+
+func TestApplyProgressHooksFireForEveryAttemptAndSurviveAFailure(t *testing.T) {
+	ctx := context.Background()
+
+	system := map[string]string{}
+	fake := newFakeProvider(system)
+	fake.failIDs = map[string]bool{"widget-b": true}
+
+	reg := registry.New()
+	if err := reg.Register(fake); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	proj := project.New(t.TempDir(), "test-project")
+	proj.SetResourcesFor("widget", []core.ProjectResource{
+		{ID: "widget-a", Attributes: map[string]any{"value": "v1"}},
+		{ID: "widget-b", Attributes: map[string]any{"value": "v1"}}, // Apply fails for this one
+		{ID: "widget-c", Attributes: map[string]any{"value": "v1"}},
+	})
+
+	e := New(reg, proj, core.SystemContext{})
+
+	var started, done []string
+	var doneErrs []error
+	opts := ApplyOptions{
+		OnActionStart: func(a core.Action) { started = append(started, a.ResourceID) },
+		OnActionDone: func(a core.Action, err error) {
+			done = append(done, a.ResourceID)
+			doneErrs = append(doneErrs, err)
+		},
+	}
+
+	result, err := e.Apply(ctx, opts)
+	if err == nil {
+		t.Fatal("Apply: want an aggregate error since widget-b fails, got nil")
+	}
+	if len(result.Applied) != 3 {
+		t.Fatalf("Applied = %+v, want all 3 create actions attempted", result.Applied)
+	}
+
+	// Every attempted action gets both hooks, in order, regardless of
+	// whether it failed -- Apply keeps going past a single failure.
+	wantIDs := []string{"widget-a", "widget-b", "widget-c"}
+	if len(started) != 3 || len(done) != 3 {
+		t.Fatalf("started = %v, done = %v, want 3 of each", started, done)
+	}
+	for i, id := range wantIDs {
+		if started[i] != id {
+			t.Errorf("started[%d] = %q, want %q (progress must fire before Apply, not after)", i, started[i], id)
+		}
+		if done[i] != id {
+			t.Errorf("done[%d] = %q, want %q", i, done[i], id)
+		}
+	}
+	for i, id := range wantIDs {
+		wantErr := id == "widget-b"
+		if (doneErrs[i] != nil) != wantErr {
+			t.Errorf("doneErrs[%d] (%s) = %v, want non-nil only for widget-b", i, id, doneErrs[i])
+		}
+	}
+
+	// DryRun must never invoke either hook -- it's a preview, nothing was
+	// actually attempted.
+	var dryStarted int
+	dryOpts := ApplyOptions{DryRun: true, OnActionStart: func(core.Action) { dryStarted++ }}
+	if _, err := e.Apply(ctx, dryOpts); err != nil {
+		t.Fatalf("Apply (dry run): %v", err)
+	}
+	if dryStarted != 0 {
+		t.Errorf("OnActionStart fired %d times under DryRun, want 0", dryStarted)
 	}
 }
 

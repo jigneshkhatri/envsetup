@@ -250,9 +250,12 @@ func TestExportAndApplyRoundTrip(t *testing.T) {
 		t.Fatalf("Apply: %v", err)
 	}
 
-	wantCall := "sudo cp " + filepath.Join(projectDir, "files", systemPath) + " " + systemPath
-	if len(calls) != 1 || calls[0] != wantCall {
-		t.Errorf("calls = %+v, want [%q]", calls, wantCall)
+	wantCalls := []string{
+		"sudo mkdir -p " + filepath.Dir(systemPath),
+		"sudo cp " + filepath.Join(projectDir, "files", systemPath) + " " + systemPath,
+	}
+	if len(calls) != len(wantCalls) || calls[0] != wantCalls[0] || calls[1] != wantCalls[1] {
+		t.Errorf("calls = %+v, want %+v", calls, wantCalls)
 	}
 }
 

@@ -135,6 +135,16 @@ type ApplyOptions struct {
 	// reported in Skipped but never executed: apply never silently
 	// removes configuration already on the host.
 	AllowRemove bool
+	// OnActionStart, if set, is called immediately before Apply executes
+	// each action against the live system -- not called under DryRun.
+	// This is what turns a long or many-action apply from a single silent
+	// block into continuous progress output.
+	OnActionStart func(core.Action)
+	// OnActionDone, if set, is called immediately after each action
+	// finishes, err nil on success. Apply keeps going past a failure (see
+	// Apply's doc comment), so this is what makes a failure visible in
+	// real time rather than only once the whole batch completes.
+	OnActionDone func(core.Action, error)
 }
 
 // ApplyResult is what Apply executed (or would execute, under DryRun) and
@@ -201,13 +211,27 @@ func (e *Engine) Apply(ctx context.Context, opts ApplyOptions) (*ApplyResult, er
 
 	var errs []error
 	for _, a := range result.Applied {
+		if opts.OnActionStart != nil {
+			opts.OnActionStart(a)
+		}
+
 		p, ok := e.Registry.Get(a.ResourceType)
 		if !ok {
-			errs = append(errs, fmt.Errorf("engine: no provider registered for type %q", a.ResourceType))
+			err := fmt.Errorf("engine: no provider registered for type %q", a.ResourceType)
+			errs = append(errs, err)
+			if opts.OnActionDone != nil {
+				opts.OnActionDone(a, err)
+			}
 			continue
 		}
-		if err := p.Apply(ctx, e.Project.Dir, a); err != nil {
-			errs = append(errs, fmt.Errorf("engine: applying %s %q: %w", a.ResourceType, a.ResourceID, err))
+
+		applyErr := p.Apply(ctx, e.Project.Dir, a)
+		if applyErr != nil {
+			applyErr = fmt.Errorf("engine: applying %s %q: %w", a.ResourceType, a.ResourceID, applyErr)
+			errs = append(errs, applyErr)
+		}
+		if opts.OnActionDone != nil {
+			opts.OnActionDone(a, applyErr)
 		}
 	}
 

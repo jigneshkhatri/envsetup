@@ -213,14 +213,24 @@ func (p *Provider) Plan(ctx context.Context, desired []core.ProjectResource, cur
 
 // Apply writes the desired content to the system path via `sudo cp` --
 // copy-only, no symlink strategy: less common practice and more
-// surprising for a root-owned path than for a user's own dotfiles. Delete
-// is deliberately not implemented: there's no general way to "reset a file
+// surprising for a root-owned path than for a user's own dotfiles. The
+// parent directory is created first: a drop-in path (e.g.
+// /etc/sddm.conf.d/theme.conf) may not exist yet on a freshly-reproduced
+// machine, since discovering it in the first place required the directory
+// to already exist on the machine it was exported from. Delete is
+// deliberately not implemented: there's no general way to "reset a file
 // to its package default" other than reinstalling the package, which is
 // out of scope for a simple file write.
 func (p *Provider) Apply(ctx context.Context, projectDir string, action core.Action) error {
 	switch action.Kind {
 	case core.ActionCreate, core.ActionUpdate:
 		srcPath := filepath.Join(project.FilesDir(projectDir), action.ResourceID)
+
+		mkdirName, mkdirArgs := sudo.Wrap("mkdir", "-p", filepath.Dir(action.ResourceID))
+		if _, err := p.run(ctx, mkdirName, mkdirArgs...); err != nil {
+			return err
+		}
+
 		name, args := sudo.Wrap("cp", srcPath, action.ResourceID)
 		_, err := p.run(ctx, name, args...)
 		return err

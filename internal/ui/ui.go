@@ -51,6 +51,26 @@ func PrintScan(w io.Writer, found map[string][]core.Resource, verbose bool) {
 	}
 }
 
+// PrintApplyStart announces that Apply is about to execute a single
+// action, meant to be called immediately before running it -- so a long
+// or many-action apply prints continuous progress instead of going silent
+// until the whole batch finishes or errors.
+func PrintApplyStart(w io.Writer, a core.Action) {
+	fmt.Fprintf(w, "applying %s.%s: %s ...\n", a.ResourceType, a.ResourceID, a.Description)
+}
+
+// PrintApplyResult reports the outcome of one action immediately after it
+// finishes. It's silent on success -- the next action's start line is
+// confirmation enough -- and prints a visible failure marker otherwise,
+// since Apply keeps going past a single action's failure and the
+// aggregate error only surfaces once the whole batch completes.
+func PrintApplyResult(w io.Writer, a core.Action, err error) {
+	if err == nil {
+		return
+	}
+	fmt.Fprintln(w, red(fmt.Sprintf("  ! %s.%s failed: %v", a.ResourceType, a.ResourceID, err)))
+}
+
 // PrintPlan renders a plan/apply preview: one line per action, colorized by
 // kind, followed by a create/update/delete summary.
 func PrintPlan(w io.Writer, actions []core.Action) {
