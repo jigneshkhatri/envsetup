@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/jigneshkhatri/envsetup/internal/core"
+	"github.com/jigneshkhatri/envsetup/internal/sudo"
 )
 
 // Provider discovers and reconciles explicitly-installed pacman/AUR
@@ -137,8 +138,9 @@ func (p *Provider) Plan(ctx context.Context, desired []core.ProjectResource, cur
 
 // Apply installs via the AUR helper when the package's provenance is "aur",
 // otherwise via pacman directly. pacman itself needs root, so plain pacman
-// calls are prefixed with sudo; AUR helpers manage their own sudo
-// invocations internally and must not be run as root.
+// calls go through sudo.Wrap (sudo when not already root); AUR helpers
+// manage their own sudo invocations internally and must not be run as
+// root.
 func (p *Provider) Apply(ctx context.Context, projectDir string, action core.Action) error {
 	switch action.Kind {
 	case core.ActionCreate:
@@ -150,11 +152,13 @@ func (p *Provider) Apply(ctx context.Context, projectDir string, action core.Act
 			_, err := p.run(ctx, p.aurHelper, "-S", "--noconfirm", action.ResourceID)
 			return err
 		}
-		_, err := p.run(ctx, "sudo", "pacman", "-S", "--noconfirm", action.ResourceID)
+		name, args := sudo.Wrap("pacman", "-S", "--noconfirm", action.ResourceID)
+		_, err := p.run(ctx, name, args...)
 		return err
 
 	case core.ActionDelete:
-		_, err := p.run(ctx, "sudo", "pacman", "-R", "--noconfirm", action.ResourceID)
+		name, args := sudo.Wrap("pacman", "-R", "--noconfirm", action.ResourceID)
+		_, err := p.run(ctx, name, args...)
 		return err
 
 	default:

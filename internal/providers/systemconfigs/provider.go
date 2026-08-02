@@ -29,6 +29,7 @@ import (
 	"github.com/jigneshkhatri/envsetup/internal/core"
 	"github.com/jigneshkhatri/envsetup/internal/pacman"
 	"github.com/jigneshkhatri/envsetup/internal/project"
+	"github.com/jigneshkhatri/envsetup/internal/sudo"
 )
 
 // Provider discovers and reconciles pacman-tracked, locally-modified
@@ -220,7 +221,8 @@ func (p *Provider) Apply(ctx context.Context, projectDir string, action core.Act
 	switch action.Kind {
 	case core.ActionCreate, core.ActionUpdate:
 		srcPath := filepath.Join(project.FilesDir(projectDir), action.ResourceID)
-		_, err := p.run(ctx, "sudo", "cp", srcPath, action.ResourceID)
+		name, args := sudo.Wrap("cp", srcPath, action.ResourceID)
+		_, err := p.run(ctx, name, args...)
 		return err
 
 	default:

@@ -34,6 +34,7 @@ import (
 	"github.com/jigneshkhatri/envsetup/internal/core"
 	"github.com/jigneshkhatri/envsetup/internal/pacman"
 	"github.com/jigneshkhatri/envsetup/internal/project"
+	"github.com/jigneshkhatri/envsetup/internal/sudo"
 )
 
 // Provider discovers and reconciles manually-installed themes under
@@ -316,7 +317,8 @@ func (p *Provider) Apply(ctx context.Context, projectDir string, action core.Act
 
 	case core.ActionDelete:
 		if scope == "system" {
-			_, err := p.run(ctx, "sudo", "rm", "-rf", targetPath)
+			name, args := sudo.Wrap("rm", "-rf", targetPath)
+			_, err := p.run(ctx, name, args...)
 			if err != nil {
 				return fmt.Errorf("themes: removing %s: %w", targetPath, err)
 			}
@@ -458,10 +460,12 @@ func (p *Provider) activateSDDMTheme(ctx context.Context, themeName string) erro
 		return err
 	}
 
-	if _, err := p.run(ctx, "sudo", "mkdir", "-p", p.systemPath(sddmConfDir)); err != nil {
+	mkdirName, mkdirArgs := sudo.Wrap("mkdir", "-p", p.systemPath(sddmConfDir))
+	if _, err := p.run(ctx, mkdirName, mkdirArgs...); err != nil {
 		return err
 	}
-	_, err = p.run(ctx, "sudo", "cp", tmp.Name(), p.systemPath(sddmActivationFile))
+	cpName, cpArgs := sudo.Wrap("cp", tmp.Name(), p.systemPath(sddmActivationFile))
+	_, err = p.run(ctx, cpName, cpArgs...)
 	return err
 }
 
@@ -470,10 +474,12 @@ func (p *Provider) activateSDDMTheme(ctx context.Context, themeName string) erro
 // update never leaves stale files behind or nests src inside an
 // already-existing dest (a classic `cp -r` footgun).
 func (p *Provider) copyTreeSudo(ctx context.Context, src, dest string) error {
-	if _, err := p.run(ctx, "sudo", "rm", "-rf", dest); err != nil {
+	rmName, rmArgs := sudo.Wrap("rm", "-rf", dest)
+	if _, err := p.run(ctx, rmName, rmArgs...); err != nil {
 		return err
 	}
-	_, err := p.run(ctx, "sudo", "cp", "-r", src, dest)
+	cpName, cpArgs := sudo.Wrap("cp", "-r", src, dest)
+	_, err := p.run(ctx, cpName, cpArgs...)
 	return err
 }
 

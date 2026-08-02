@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/jigneshkhatri/envsetup/internal/core"
+	"github.com/jigneshkhatri/envsetup/internal/sudo"
 )
 
 // scopes are the two systemd instances EnvSetup tracks enabled units for.
@@ -134,7 +135,8 @@ func (p *Provider) Apply(ctx context.Context, projectDir string, action core.Act
 	}
 
 	if scope == "system" {
-		_, err := p.run(ctx, "sudo", "systemctl", verb, unit)
+		name, args := sudo.Wrap("systemctl", verb, unit)
+		_, err := p.run(ctx, name, args...)
 		return err
 	}
 	_, err := p.run(ctx, "systemctl", "--user", verb, unit)
