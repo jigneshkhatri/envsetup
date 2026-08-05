@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -22,16 +23,19 @@ func newDoctorCmd(app *App) *cobra.Command {
 			}
 
 			e := engine.New(app.Registry, proj, systemContext())
-			diagnoses, err := e.Doctor(context.Background())
-			if err != nil {
-				return err
+			// A provider that fails its Doctor check doesn't block the
+			// rest -- it's reported here, and every other provider's
+			// diagnoses are still shown.
+			diagnoses, doctorErr := e.Doctor(context.Background())
+			if doctorErr != nil {
+				fmt.Fprintf(app.Out, "warning: %v\n\n", doctorErr)
 			}
 
 			ui.PrintDoctor(app.Out, diagnoses)
 			if len(diagnoses) > 0 {
 				app.ExitCode = 2
 			}
-			return nil
+			return doctorErr
 		},
 	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -22,16 +23,18 @@ func newPlanCmd(app *App) *cobra.Command {
 			}
 
 			e := engine.New(app.Registry, proj, systemContext())
-			actions, err := e.Plan(context.Background())
-			if err != nil {
-				return err
+			// A provider that fails to plan doesn't block the rest -- it's
+			// reported here, and every other provider's plan is still shown.
+			actions, planErr := e.Plan(context.Background())
+			if planErr != nil {
+				fmt.Fprintf(app.Out, "warning: %v\n\n", planErr)
 			}
 
 			ui.PrintPlan(app.Out, actions)
 			if len(actions) > 0 {
 				app.ExitCode = 2
 			}
-			return nil
+			return planErr
 		},
 	}
 }

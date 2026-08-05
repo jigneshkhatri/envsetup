@@ -37,15 +37,19 @@ func newExportCmd(app *App) *cobra.Command {
 			}
 
 			e := engine.New(app.Registry, proj, systemContext())
-			results, err := e.Export(context.Background())
-			if err != nil {
-				return err
+			// A provider that fails to discover/export doesn't block the
+			// rest -- it's reported here, and every other provider's
+			// results are still exported.
+			results, exportErr := e.Export(context.Background())
+			if exportErr != nil {
+				fmt.Fprintf(app.Out, "warning: %v\n\n", exportErr)
 			}
 
 			fmt.Fprintln(app.Out)
 			for _, r := range results {
 				exported := r.Exported
 				if len(r.NeedsReview) > 0 && !yes {
+					var err error
 					exported, err = reviewLowConfidence(app, r)
 					if err != nil {
 						return err
@@ -60,7 +64,7 @@ func newExportCmd(app *App) *cobra.Command {
 			}
 
 			fmt.Fprintf(app.Out, "\nProject written to %s\n", absDir)
-			return nil
+			return exportErr
 		},
 	}
 

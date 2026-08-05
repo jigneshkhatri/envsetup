@@ -28,16 +28,24 @@ func New(reg *registry.Registry, proj *project.Project, sys core.SystemContext) 
 
 // Scan runs Discover across every registered provider. Read-only -- never
 // modifies the system or the project.
+//
+// A single provider failing to Discover does not stop the others: that
+// provider is skipped, its error recorded, and every other provider is
+// still scanned. Callers get back both the results that could be gathered
+// and an aggregate error describing what couldn't.
 func (e *Engine) Scan(ctx context.Context) (map[string][]core.Resource, error) {
 	found := make(map[string][]core.Resource)
+	var errs []error
+
 	for _, p := range e.Registry.All() {
 		resources, err := p.Discover(ctx, e.Sys)
 		if err != nil {
-			return nil, fmt.Errorf("engine: discovering %s: %w", p.Type(), err)
+			errs = append(errs, fmt.Errorf("engine: discovering %s: %w", p.Type(), err))
+			continue
 		}
 		found[p.Type()] = resources
 	}
-	return found, nil
+	return found, errors.Join(errs...)
 }
 
 // ExportResult is one provider's Export output: the resources ready to be
@@ -53,8 +61,14 @@ type ExportResult struct {
 // does not write anything to disk or mutate the in-memory project --
 // callers decide (after any interactive review of NeedsReview items)
 // whether to call Project.SetResourcesFor and Project.Save.
+//
+// A single provider failing to Discover or Export does not stop the
+// others: that provider is skipped, its error recorded, and every other
+// provider is still exported. Callers get back both the results that could
+// be gathered and an aggregate error describing what couldn't.
 func (e *Engine) Export(ctx context.Context) ([]ExportResult, error) {
 	var results []ExportResult
+	var errs []error
 
 	for _, p := range e.Registry.All() {
 		if ud, ok := p.(core.UserDeclaredProvider); ok && ud.UserDeclared() {
@@ -63,12 +77,14 @@ func (e *Engine) Export(ctx context.Context) ([]ExportResult, error) {
 
 		discovered, err := p.Discover(ctx, e.Sys)
 		if err != nil {
-			return nil, fmt.Errorf("engine: discovering %s: %w", p.Type(), err)
+			errs = append(errs, fmt.Errorf("engine: discovering %s: %w", p.Type(), err))
+			continue
 		}
 
 		exported, err := p.Export(ctx, e.Project.Dir, discovered)
 		if err != nil {
-			return nil, fmt.Errorf("engine: exporting %s: %w", p.Type(), err)
+			errs = append(errs, fmt.Errorf("engine: exporting %s: %w", p.Type(), err))
+			continue
 		}
 
 		var needsReview []core.Resource
@@ -85,27 +101,37 @@ func (e *Engine) Export(ctx context.Context) ([]ExportResult, error) {
 		})
 	}
 
-	return results, nil
+	return results, errors.Join(errs...)
 }
 
 // Plan diffs every provider's desired resources (from the project) against
 // current resources (from a fresh Discover) and returns the merged,
 // deterministically ordered list of non-noop actions needed to reconcile
 // them. Never modifies the system.
+//
+// A single provider failing to Discover or Plan (e.g. a transient pacman
+// error, or a permissions issue reading one config path) does not stop the
+// others: that provider is skipped, its error recorded, and every other
+// provider is still planned. Callers get back both the actions that could
+// be computed and an aggregate error describing what couldn't -- never a
+// forced choice between "nothing" and "everything but the one that broke."
 func (e *Engine) Plan(ctx context.Context) ([]core.Action, error) {
 	var actions []core.Action
+	var errs []error
 
 	for _, p := range e.Registry.All() {
 		current, err := p.Discover(ctx, e.Sys)
 		if err != nil {
-			return nil, fmt.Errorf("engine: discovering %s: %w", p.Type(), err)
+			errs = append(errs, fmt.Errorf("engine: discovering %s: %w", p.Type(), err))
+			continue
 		}
 
 		desired := e.Project.ResourcesFor(p.Type())
 
 		typeActions, err := p.Plan(ctx, desired, current)
 		if err != nil {
-			return nil, fmt.Errorf("engine: planning %s: %w", p.Type(), err)
+			errs = append(errs, fmt.Errorf("engine: planning %s: %w", p.Type(), err))
+			continue
 		}
 
 		for _, a := range typeActions {
@@ -115,7 +141,7 @@ func (e *Engine) Plan(ctx context.Context) ([]core.Action, error) {
 		}
 	}
 
-	return actions, nil
+	return actions, errors.Join(errs...)
 }
 
 // ApplyOptions configures Apply.
@@ -166,12 +192,13 @@ type ApplyResult struct {
 // removes configuration already on the host unless explicitly told to.
 // Among the actions that do run, Apply continues past a failure so one
 // resource's failure does not block unrelated resources, returning every
-// action it attempted alongside an aggregate error, if any.
+// action it attempted alongside an aggregate error, if any. This extends to
+// planning itself: if one provider fails to Discover or Plan, Apply still
+// executes whatever actions the rest of the plan produced, folding the
+// planning failure into the same aggregate error rather than aborting
+// before anything runs.
 func (e *Engine) Apply(ctx context.Context, opts ApplyOptions) (*ApplyResult, error) {
-	actions, err := e.Plan(ctx)
-	if err != nil {
-		return nil, err
-	}
+	actions, planErr := e.Plan(ctx)
 
 	if len(opts.Only) > 0 {
 		allowed := make(map[string]bool, len(opts.Only))
@@ -206,10 +233,13 @@ func (e *Engine) Apply(ctx context.Context, opts ApplyOptions) (*ApplyResult, er
 	}
 
 	if opts.DryRun {
-		return result, nil
+		return result, planErr
 	}
 
 	var errs []error
+	if planErr != nil {
+		errs = append(errs, planErr)
+	}
 	for _, a := range result.Applied {
 		if opts.OnActionStart != nil {
 			opts.OnActionStart(a)
@@ -240,27 +270,39 @@ func (e *Engine) Apply(ctx context.Context, opts ApplyOptions) (*ApplyResult, er
 
 // Validate reports drift between every provider's desired resources and
 // live system state, without modifying anything.
+//
+// A single provider failing to Validate does not stop the others: that
+// provider is skipped, its error recorded, and every other provider is
+// still validated. Callers get back both the results that could be
+// gathered and an aggregate error describing what couldn't.
 func (e *Engine) Validate(ctx context.Context) ([]core.ValidationResult, error) {
 	var results []core.ValidationResult
+	var errs []error
 
 	for _, p := range e.Registry.All() {
 		desired := e.Project.ResourcesFor(p.Type())
 
 		typeResults, err := p.Validate(ctx, desired)
 		if err != nil {
-			return nil, fmt.Errorf("engine: validating %s: %w", p.Type(), err)
+			errs = append(errs, fmt.Errorf("engine: validating %s: %w", p.Type(), err))
+			continue
 		}
 
 		results = append(results, typeResults...)
 	}
 
-	return results, nil
+	return results, errors.Join(errs...)
 }
 
 // Doctor runs cross-provider health diagnostics: generic project schema
 // checks (blank or duplicate resource IDs), plus each provider's own
 // Doctor checks (for providers that implement core.DoctorProvider), never
 // modifying anything.
+//
+// A single provider failing its Doctor check does not stop the others:
+// that provider is skipped, its error recorded, and every other provider's
+// diagnostics still run. Callers get back both the diagnoses that could be
+// gathered and an aggregate error describing what couldn't.
 func (e *Engine) Doctor(ctx context.Context) ([]core.Diagnosis, error) {
 	var diagnoses []core.Diagnosis
 
@@ -279,6 +321,7 @@ func (e *Engine) Doctor(ctx context.Context) ([]core.Diagnosis, error) {
 		}
 	}
 
+	var errs []error
 	for _, p := range e.Registry.All() {
 		dp, ok := p.(core.DoctorProvider)
 		if !ok {
@@ -292,10 +335,11 @@ func (e *Engine) Doctor(ctx context.Context) ([]core.Diagnosis, error) {
 
 		found, err := dp.Doctor(ctx, e.Project.Dir, desired)
 		if err != nil {
-			return nil, fmt.Errorf("engine: diagnosing %s: %w", p.Type(), err)
+			errs = append(errs, fmt.Errorf("engine: diagnosing %s: %w", p.Type(), err))
+			continue
 		}
 		diagnoses = append(diagnoses, found...)
 	}
 
-	return diagnoses, nil
+	return diagnoses, errors.Join(errs...)
 }

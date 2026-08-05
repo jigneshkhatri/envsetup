@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"sort"
 	"testing"
 
 	"github.com/jigneshkhatri/envsetup/internal/core"
@@ -56,8 +57,19 @@ func (f *fakeProvider) Plan(ctx context.Context, desired []core.ProjectResource,
 		desiredByID[r.ID] = r
 	}
 
+	// Iterated in sorted ID order -- ranging the maps directly would give
+	// tests a nondeterministic action order (Go randomizes map iteration
+	// per process), which is exactly what made
+	// TestApplyProgressHooksFireForEveryAttemptAndSurviveAFailure flaky.
+	desiredIDs := make([]string, 0, len(desiredByID))
+	for id := range desiredByID {
+		desiredIDs = append(desiredIDs, id)
+	}
+	sort.Strings(desiredIDs)
+
 	var actions []core.Action
-	for id, d := range desiredByID {
+	for _, id := range desiredIDs {
+		d := desiredByID[id]
 		c, exists := currentByID[id]
 		switch {
 		case !exists:
@@ -72,7 +84,14 @@ func (f *fakeProvider) Plan(ctx context.Context, desired []core.ProjectResource,
 			})
 		}
 	}
+
+	currentIDs := make([]string, 0, len(currentByID))
 	for id := range currentByID {
+		currentIDs = append(currentIDs, id)
+	}
+	sort.Strings(currentIDs)
+
+	for _, id := range currentIDs {
 		if _, exists := desiredByID[id]; !exists {
 			actions = append(actions, core.Action{
 				ResourceType: f.Type(), ResourceID: id, Kind: core.ActionDelete,
@@ -111,6 +130,228 @@ func (f *fakeProvider) Validate(ctx context.Context, desired []core.ProjectResou
 		}
 	}
 	return results, nil
+}
+
+// brokenProvider always fails Discover -- it simulates a real provider
+// hitting a transient error (e.g. pacman being briefly unreachable) so
+// tests can assert that one provider's failure doesn't block every other
+// provider's plan/apply.
+type brokenProvider struct{ fakeProvider }
+
+func (b *brokenProvider) Type() string { return "broken" }
+
+func (b *brokenProvider) Discover(ctx context.Context, sys core.SystemContext) ([]core.Resource, error) {
+	return nil, errors.New("simulated discover failure")
+}
+
+// Validate is overridden separately from Discover -- Engine.Validate never
+// calls Discover, so a Discover-only failure wouldn't exercise it.
+func (b *brokenProvider) Validate(ctx context.Context, desired []core.ProjectResource) ([]core.ValidationResult, error) {
+	return nil, errors.New("simulated validate failure")
+}
+
+// brokenDoctorProvider implements core.DoctorProvider with a Doctor check
+// that always fails, to prove one provider's failed diagnosis doesn't stop
+// Engine.Doctor from running every other provider's checks.
+type brokenDoctorProvider struct{ fakeProvider }
+
+func (b *brokenDoctorProvider) Type() string { return "broken-doctor" }
+
+func (b *brokenDoctorProvider) Doctor(ctx context.Context, projectDir string, desired []core.ProjectResource) ([]core.Diagnosis, error) {
+	return nil, errors.New("simulated doctor failure")
+}
+
+// TestPlanSkipsFailingProviderButKeepsOthers guards the fix for a real bug:
+// Plan used to abort entirely -- returning zero actions -- the moment any
+// single provider's Discover or Plan call errored, which meant one broken
+// provider (e.g. a transient pacman failure) silently blocked apply from
+// doing anything at all, even for unrelated resource types that were
+// perfectly fine.
+func TestPlanSkipsFailingProviderButKeepsOthers(t *testing.T) {
+	ctx := context.Background()
+
+	reg := registry.New()
+	if err := reg.Register(newFakeProvider(map[string]string{})); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := reg.Register(&brokenProvider{}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	proj := project.New(t.TempDir(), "test-project")
+	proj.SetResourcesFor("widget", []core.ProjectResource{
+		{ID: "widget-a", Attributes: map[string]any{"value": "v1"}},
+	})
+	proj.SetResourcesFor("broken", []core.ProjectResource{
+		{ID: "broken-a", Attributes: map[string]any{"value": "v1"}},
+	})
+
+	e := New(reg, proj, core.SystemContext{})
+
+	actions, err := e.Plan(ctx)
+	if err == nil {
+		t.Fatal("Plan: want an aggregate error since the broken provider fails to discover, got nil")
+	}
+	if len(actions) != 1 || actions[0].ResourceType != "widget" {
+		t.Fatalf("Plan: got %+v, want the widget provider's single create action despite broken's failure", actions)
+	}
+}
+
+// TestApplyExecutesOtherProvidersWhenOneFailsToPlan is the end-to-end
+// version of the same bug: Apply calls Plan first, and used to propagate a
+// planning failure straight out of Apply before executing anything --
+// meaning packages, services, etc. would never even attempt to run just
+// because, say, the dotfiles provider hit a Discover error. Apply must
+// instead still execute every action it could plan, and fold the planning
+// failure into the same aggregate error as any apply-time failures.
+func TestApplyExecutesOtherProvidersWhenOneFailsToPlan(t *testing.T) {
+	ctx := context.Background()
+
+	system := map[string]string{}
+	reg := registry.New()
+	if err := reg.Register(newFakeProvider(system)); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := reg.Register(&brokenProvider{}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	proj := project.New(t.TempDir(), "test-project")
+	proj.SetResourcesFor("widget", []core.ProjectResource{
+		{ID: "widget-a", Attributes: map[string]any{"value": "v1"}},
+	})
+	proj.SetResourcesFor("broken", []core.ProjectResource{
+		{ID: "broken-a", Attributes: map[string]any{"value": "v1"}},
+	})
+
+	e := New(reg, proj, core.SystemContext{})
+
+	result, err := e.Apply(ctx, ApplyOptions{})
+	if err == nil {
+		t.Fatal("Apply: want an aggregate error since the broken provider fails to plan, got nil")
+	}
+	if len(result.Applied) != 1 || result.Applied[0].ResourceType != "widget" {
+		t.Fatalf("Apply: result.Applied = %+v, want the widget provider's create action still attempted", result.Applied)
+	}
+	if system["widget-a"] != "v1" {
+		t.Fatalf("Apply: widget-a = %q, want it created despite broken's planning failure", system["widget-a"])
+	}
+}
+
+// TestScanSkipsFailingProviderButKeepsOthers guards the same fix for Scan:
+// one provider failing to Discover must not stop `envsetup scan` from
+// reporting every other provider's results.
+func TestScanSkipsFailingProviderButKeepsOthers(t *testing.T) {
+	ctx := context.Background()
+
+	reg := registry.New()
+	if err := reg.Register(newFakeProvider(map[string]string{"widget-a": "v1"})); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := reg.Register(&brokenProvider{}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	e := New(reg, nil, core.SystemContext{})
+
+	found, err := e.Scan(ctx)
+	if err == nil {
+		t.Fatal("Scan: want an aggregate error since the broken provider fails to discover, got nil")
+	}
+	if len(found["widget"]) != 1 {
+		t.Fatalf("Scan: found[\"widget\"] = %+v, want the widget provider's result despite broken's failure", found["widget"])
+	}
+	if _, ok := found["broken"]; ok {
+		t.Fatalf("Scan: found[\"broken\"] = %+v, want no entry for a provider that failed to discover", found["broken"])
+	}
+}
+
+// TestExportSkipsFailingProviderButKeepsOthers guards the same fix for
+// Export: one provider failing to Discover must not stop `envsetup export`
+// from exporting every other provider's resources.
+func TestExportSkipsFailingProviderButKeepsOthers(t *testing.T) {
+	ctx := context.Background()
+
+	reg := registry.New()
+	if err := reg.Register(newFakeProvider(map[string]string{"widget-a": "v1"})); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := reg.Register(&brokenProvider{}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	proj := project.New(t.TempDir(), "test-project")
+	e := New(reg, proj, core.SystemContext{})
+
+	results, err := e.Export(ctx)
+	if err == nil {
+		t.Fatal("Export: want an aggregate error since the broken provider fails to discover, got nil")
+	}
+	if len(results) != 1 || results[0].Type != "widget" {
+		t.Fatalf("Export: results = %+v, want only the widget provider's result despite broken's failure", results)
+	}
+}
+
+// TestValidateSkipsFailingProviderButKeepsOthers guards the same fix for
+// Validate: one provider failing to Validate must not stop `envsetup
+// validate` from reporting every other provider's drift.
+func TestValidateSkipsFailingProviderButKeepsOthers(t *testing.T) {
+	ctx := context.Background()
+
+	reg := registry.New()
+	if err := reg.Register(newFakeProvider(map[string]string{"widget-a": "v1"})); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := reg.Register(&brokenProvider{}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	proj := project.New(t.TempDir(), "test-project")
+	proj.SetResourcesFor("widget", []core.ProjectResource{
+		{ID: "widget-a", Attributes: map[string]any{"value": "v1"}},
+	})
+	proj.SetResourcesFor("broken", []core.ProjectResource{
+		{ID: "broken-a", Attributes: map[string]any{"value": "v1"}},
+	})
+
+	e := New(reg, proj, core.SystemContext{})
+
+	results, err := e.Validate(ctx)
+	if err == nil {
+		t.Fatal("Validate: want an aggregate error since the broken provider fails to validate, got nil")
+	}
+	if len(results) != 1 || results[0].ResourceType != "widget" {
+		t.Fatalf("Validate: results = %+v, want only the widget provider's result despite broken's failure", results)
+	}
+}
+
+// TestDoctorSkipsFailingProviderButKeepsOthers guards the same fix for
+// Doctor: one provider's failed Doctor check must not stop `envsetup
+// doctor` from running every other provider's checks.
+func TestDoctorSkipsFailingProviderButKeepsOthers(t *testing.T) {
+	ctx := context.Background()
+
+	reg := registry.New()
+	if err := reg.Register(&doctorFakeProvider{fakeProvider{system: map[string]string{}}}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := reg.Register(&brokenDoctorProvider{}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	proj := project.New(t.TempDir(), "test-project")
+	proj.SetResourcesFor("widget", []core.ProjectResource{{ID: "widget-a"}})
+	proj.SetResourcesFor("broken-doctor", []core.ProjectResource{{ID: "broken-a"}})
+
+	e := New(reg, proj, core.SystemContext{})
+
+	diagnoses, err := e.Doctor(ctx)
+	if err == nil {
+		t.Fatal("Doctor: want an aggregate error since broken-doctor's check fails, got nil")
+	}
+	if len(diagnoses) != 1 || diagnoses[0].Message != "fake problem" {
+		t.Fatalf("Doctor: diagnoses = %+v, want only the working provider's diagnosis despite broken-doctor's failure", diagnoses)
+	}
 }
 
 // TestEngineLifecycle drives a fake provider through the full

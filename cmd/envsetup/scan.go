@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -17,13 +18,16 @@ func newScanCmd(app *App) *cobra.Command {
 			verbose, _ := cmd.Flags().GetBool("verbose")
 
 			e := engine.New(app.Registry, nil, systemContext())
+			// A provider that fails to discover doesn't block the rest --
+			// it's reported here, and every other provider's results are
+			// still shown.
 			found, err := e.Scan(context.Background())
 			if err != nil {
-				return err
+				fmt.Fprintf(app.Out, "warning: %v\n\n", err)
 			}
 
 			ui.PrintScan(app.Out, found, verbose)
-			return nil
+			return err
 		},
 	}
 }

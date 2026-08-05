@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -22,9 +23,12 @@ func newValidateCmd(app *App) *cobra.Command {
 			}
 
 			e := engine.New(app.Registry, proj, systemContext())
-			results, err := e.Validate(context.Background())
-			if err != nil {
-				return err
+			// A provider that fails to validate doesn't block the rest --
+			// it's reported here, and every other provider's results are
+			// still shown.
+			results, validateErr := e.Validate(context.Background())
+			if validateErr != nil {
+				fmt.Fprintf(app.Out, "warning: %v\n\n", validateErr)
 			}
 
 			ui.PrintValidation(app.Out, results)
@@ -34,7 +38,7 @@ func newValidateCmd(app *App) *cobra.Command {
 					break
 				}
 			}
-			return nil
+			return validateErr
 		},
 	}
 }

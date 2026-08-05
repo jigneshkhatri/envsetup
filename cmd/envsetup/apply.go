@@ -44,12 +44,15 @@ func newApplyCmd(app *App) *cobra.Command {
 			}
 
 			// Apply always re-diffs before doing anything -- there is no
-			// path to mutate the system without a fresh plan.
+			// path to mutate the system without a fresh plan. A provider
+			// that fails to plan (e.g. a transient pacman error) doesn't
+			// abort the rest: it's reported here, and every other
+			// provider's plan still proceeds.
 			previewOpts := opts
 			previewOpts.DryRun = true
-			preview, err := e.Apply(context.Background(), previewOpts)
-			if err != nil {
-				return err
+			preview, previewErr := e.Apply(context.Background(), previewOpts)
+			if previewErr != nil {
+				fmt.Fprintf(app.Out, "warning: %v\n\n", previewErr)
 			}
 
 			ui.PrintPlan(app.Out, append(append([]core.Action{}, preview.Applied...), preview.Skipped...))
